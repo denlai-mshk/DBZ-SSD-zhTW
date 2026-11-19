@@ -181,10 +181,9 @@ fn game_area(
     ui.painter().rect_filled(full, 0.0, ground);
     let rect = inset.unwrap_or(full);
     let overlay = match hd {
-        Some(Layer { list, art, menu: true }) => {
+        Some(layer @ Layer { menu: true, .. }) => {
             let picture = games.first().map_or(rect, |game| picture_of(ui, rect, game, stretch));
-            note_hd_picture(ui, picture);
-            hd::paint(ui, picture, list, art);
+            paint_hd(ui, picture, layer, stretch);
             ui.allocate_rect(rect, Sense::hover());
             return;
         }
@@ -213,12 +212,11 @@ fn game_area(
         _ => {}
     }
     // An overlay of the field is painted over the picture the frame drew.
-    if let Some(Layer { list, art, .. }) = overlay
+    if let Some(layer) = overlay
         && let Some(game) = games.first()
     {
         let picture = picture_of(ui, rect, game, stretch);
-        note_hd_picture(ui, picture);
-        hd::paint(ui, picture, list, art);
+        paint_hd(ui, picture, layer, stretch);
     }
     ui.allocate_rect(rect, Sense::hover());
 }
@@ -226,9 +224,14 @@ fn game_area(
 /// The egui memory's key of the rect the HD layer was last painted over.
 const HD_PICTURE: &str = "hd-picture";
 
-/// Notes the rect the HD layer is painted over, for the pointer of Esc's question ([`quit_confirm_pointer`]).
-fn note_hd_picture(ui: &Ui, picture: Rect) {
-    ui.ctx().data_mut(|data| data.insert_temp(Id::new(HD_PICTURE), picture));
+fn paint_hd(ui: &Ui, picture: Rect, Layer { list, art, menu }: Layer<'_>, stretch: bool) {
+    let canvas = if menu {
+        hd::paint_menu(ui, picture, list, art, stretch)
+    } else {
+        hd::paint(ui, picture, list, art);
+        picture
+    };
+    ui.ctx().data_mut(|data| data.insert_temp(Id::new(HD_PICTURE), (picture, canvas)));
 }
 
 /// Esc's question under the mouse, once it is drawn: the cursor follows the pointer onto an answer, and a click on
@@ -237,13 +240,17 @@ pub fn quit_confirm_pointer(
     ui: &Ui,
     question: &mut crate::quit_confirm::QuitConfirm,
 ) -> Option<crate::quit_confirm::Outcome> {
-    let picture: Rect = ui.ctx().data(|data| data.get_temp(Id::new(HD_PICTURE)))?;
-    let fit = hd::Fit::new(picture);
+    let (picture, canvas): (Rect, Rect) =
+        ui.ctx().data(|data| data.get_temp(Id::new(HD_PICTURE)))?;
+    let projection = egui::emath::RectTransform::from_to(picture, canvas);
+    let fit = hd::Fit::new(canvas);
     if fit.scale <= 0.0 {
         return None;
     }
-    let logical =
-        |at: egui::Pos2| ((at.x - fit.origin.x) / fit.scale, (at.y - fit.origin.y) / fit.scale);
+    let logical = |at: egui::Pos2| {
+        let at = projection * at;
+        ((at.x - fit.origin.x) / fit.scale, (at.y - fit.origin.y) / fit.scale)
+    };
     let (moved, hover, click) = ui.ctx().input(|input| {
         let pointer = &input.pointer;
         let click = if pointer.primary_clicked() { pointer.interact_pos() } else { None };
@@ -972,8 +979,9 @@ mod tests {
                     let layer = Layer { list: &list, art: &mut art, menu };
                     draw_game(ui, &games, Some(layer), true);
                 });
-                let picture: Option<Rect> = ctx.data(|data| data.get_temp(Id::new(HD_PICTURE)));
-                assert_eq!(picture, Some(screen));
+                let picture: Option<(Rect, Rect)> =
+                    ctx.data(|data| data.get_temp(Id::new(HD_PICTURE)));
+                assert_eq!(picture.map(|(rect, _)| rect), Some(screen));
                 output.drop_without_applying_deltas();
             }
         }

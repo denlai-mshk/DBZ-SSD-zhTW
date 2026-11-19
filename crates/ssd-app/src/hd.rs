@@ -775,6 +775,17 @@ impl Art {
         self.field = Some(FieldImage { generation, source });
     }
 
+    fn menu_canvas(&self, picture: egui::Rect, stretch: bool) -> egui::Rect {
+        if stretch && self.backdrop_shape.crop {
+            egui::Rect::from_min_size(
+                picture.min,
+                egui::vec2(picture.width(), picture.width() * 3.0 / 4.0),
+            )
+        } else {
+            picture
+        }
+    }
+
     /// The texture of the backdrop, uploaded if the field or video shape changed; `None` before any field was
     /// copied. The 4:3 crop and filters match the live picture before it is painted in the same rect.
     fn backdrop(&mut self, ctx: &egui::Context) -> Option<egui::TextureId> {
@@ -1120,10 +1131,55 @@ pub fn paint(ui: &egui::Ui, picture: egui::Rect, list: &DrawList, art: &mut Art)
     paint_fit(ui, picture, &Fit::new(picture), list, art);
 }
 
+/// Draws a stretched 4:3 menu in the same display space as the game, including when a 4:3 CRT receives a
+/// widescreen framebuffer. Text must be tessellated before projection so its glyphs follow the portraits.
+/// Returns the canvas whose coordinates the menu's pointer uses.
+pub fn paint_menu(
+    ui: &egui::Ui,
+    picture: egui::Rect,
+    list: &DrawList,
+    art: &mut Art,
+    stretch: bool,
+) -> egui::Rect {
+    let canvas = art.menu_canvas(picture, stretch);
+    if canvas == picture {
+        paint(ui, picture, list, art);
+        return canvas;
+    }
+    let layer = egui::LayerId::new(egui::Order::Background, ui.id().with("hd-menu-projection"));
+    let painter = egui::Painter::new(ui.ctx().clone(), layer, canvas);
+    paint_with(ui, &painter, canvas, &Fit::new(canvas), list, art);
+    let recorded = ui.ctx().graphics_mut(|graphics| std::mem::take(graphics.entry(layer)));
+    let shapes = recorded.all_entries().cloned().collect();
+    let projection = egui::emath::RectTransform::from_to(canvas, picture);
+    for primitive in ui.ctx().tessellate(shapes, ui.ctx().pixels_per_point()) {
+        let egui::epaint::Primitive::Mesh(mut mesh) = primitive.primitive else {
+            unreachable!("HD draw lists do not contain paint callbacks");
+        };
+        for vertex in &mut mesh.vertices {
+            vertex.pos = projection * vertex.pos;
+        }
+        let clip = projection.transform_rect(primitive.clip_rect).intersect(picture);
+        ui.painter().with_clip_rect(clip).add(mesh);
+    }
+    canvas
+}
+
 /// [`paint`] with the fit of the list's own logical space.
 pub fn paint_fit(ui: &egui::Ui, picture: egui::Rect, fit: &Fit, list: &DrawList, art: &mut Art) {
-    let fit = *fit;
     let painter = ui.painter_at(picture);
+    paint_with(ui, &painter, picture, fit, list, art);
+}
+
+fn paint_with(
+    ui: &egui::Ui,
+    painter: &egui::Painter,
+    picture: egui::Rect,
+    fit: &Fit,
+    list: &DrawList,
+    art: &mut Art,
+) {
+    let fit = *fit;
     for op in list.ops() {
         match op {
             Op::Backdrop => {
@@ -1143,8 +1199,8 @@ pub fn paint_fit(ui: &egui::Ui, picture: egui::Rect, fit: &Fit, list: &DrawList,
                 let stroke = egui::Stroke::new(width * fit.scale, colour(*color));
                 painter.rect_stroke(fit.rect(*rect), 0.0, stroke, egui::StrokeKind::Inside);
             }
-            Op::Window { rect } => window(&painter, &fit, *rect),
-            Op::WindowHc { rect } => window_contrast(&painter, &fit, *rect),
+            Op::Window { rect } => window(painter, &fit, *rect),
+            Op::WindowHc { rect } => window_contrast(painter, &fit, *rect),
             Op::Pointer { rect, left, fill, edge, ring } => {
                 let (tip, base) =
                     if *left { (rect.x, rect.right()) } else { (rect.right(), rect.x) };
@@ -1195,7 +1251,7 @@ pub fn paint_fit(ui: &egui::Ui, picture: egui::Rect, fit: &Fit, list: &DrawList,
                     stroke,
                 ));
             }
-            Op::Portrait { rect, picture } => portrait(ui, &painter, &fit, art, *rect, *picture),
+            Op::Portrait { rect, picture } => portrait(ui, painter, &fit, art, *rect, *picture),
             Op::Card { rect, attack_z, defence_z } => {
                 match art.card(ui.ctx(), *attack_z, *defence_z) {
                     Some((id, size)) => {
@@ -1207,8 +1263,9 @@ pub fn paint_fit(ui: &egui::Ui, picture: egui::Rect, fit: &Fit, list: &DrawList,
                             egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
                         painter.image(id, drawn, uv, egui::Color32::WHITE);
                     }
-                    None => paint_fit(
+                    None => paint_with(
                         ui,
+                        painter,
                         picture,
                         &fit,
                         &ssd_menus::screens::pixel_card(*rect, *attack_z, *defence_z),
@@ -1227,8 +1284,9 @@ pub fn paint_fit(ui: &egui::Ui, picture: egui::Rect, fit: &Fit, list: &DrawList,
                     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
                     painter.image(id, fit.rect(*rect), uv, egui::Color32::WHITE);
                 }
-                None => paint_fit(
+                None => paint_with(
                     ui,
+                    painter,
                     picture,
                     &fit,
                     &ssd_menus::screens::cards::flat_part(*rect, *part),
@@ -1435,7 +1493,7 @@ mod tests {
         let image =
             output.textures_delta.set.get(&id).and_then(|deltas| deltas.last()).map(|delta| {
                 let egui::epaint::image::ImageData::Color(image) = &delta.image;
-                image.clone()
+                std::sync::Arc::clone(image)
             });
         output.drop_without_applying_deltas();
         (id, image)
@@ -1582,6 +1640,188 @@ mod tests {
         assert_eq!(fit.point(0.0, 0.0), egui::pos2(0.0, 45.0), "centred vertically");
         let square = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(640.0, 720.0));
         assert!((Fit::new(square).scale - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn stretch_aspect_4_3_fullscreen_keeps_portraits_square_on_a_4_3_display() {
+        let ctx = measuring_context();
+        let mut values = ssd_menus::options::Values::new();
+        values.set("video.aspect", 1);
+        values.set("video.display", 1);
+        let video = crate::options::video::VideoSettings::from_values(&values);
+        assert!(video.narrow && video.fullscreen);
+        let mut list = DrawList::new();
+        list.push(Op::Backdrop);
+        for x in [32.0, 1144.0] {
+            list.push(Op::Portrait {
+                rect: Rect::new(x, 28.0, 104.0, 104.0),
+                picture: Some(Picture::Face(0)),
+            });
+        }
+        let games = [crate::canvas::GameImage {
+            id: egui::TextureId::User(42),
+            width: 256,
+            height: 224,
+            pixel_aspect: 8.0 / 7.0,
+        }];
+        let display = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 720.0));
+        let mut expected = None;
+        // A 4:3 CRT may receive a 16:9 HDMI signal; its physical shape is not the framebuffer's shape.
+        for size in
+            [egui::vec2(960.0, 720.0), egui::vec2(1280.0, 720.0), egui::vec2(1920.0, 1080.0)]
+        {
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+            let raw = egui::RawInput { screen_rect: Some(screen), ..Default::default() };
+            let mut art = Art::empty();
+            art.backdrop_shape = video.shape();
+            art.note_field_shared(&patterned_field(1));
+            let texture = ctx.load_texture(
+                "square portrait",
+                egui::ColorImage::from_rgba_unmultiplied([32, 32], &vec![255; 32 * 32 * 4]),
+                egui::TextureOptions::NEAREST,
+            );
+            let portrait_id = texture.id();
+            art.textures.insert(Picture::Face(0), Some(texture));
+            let output = ctx.run_ui(raw.clone(), |ui| crate::ui::draw_game(ui, &games, None, true));
+            assert!(output.shapes.iter().any(|clipped| matches!(
+                &clipped.shape,
+                egui::Shape::Mesh(mesh) if mesh.texture_id == games[0].id && mesh.calc_bounds() == screen
+            )), "the live game still fills the panel");
+            output.drop_without_applying_deltas();
+            let output = ctx.run_ui(raw.clone(), |ui| {
+                let layer = crate::ui::Layer { list: &list, art: &mut art, menu: true };
+                crate::ui::draw_game(ui, &games, Some(layer), true);
+            });
+            let physical = egui::emath::RectTransform::from_to(screen, display);
+            let portraits: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    egui::Shape::Mesh(mesh) if mesh.texture_id == portrait_id => {
+                        Some(physical.transform_rect(mesh.calc_bounds()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(portraits.len(), 2);
+            for portrait in &portraits {
+                assert!(
+                    (portrait.width() - portrait.height()).abs() < 0.01,
+                    "{size:?}: {portrait:?}"
+                );
+            }
+            match &expected {
+                Some(previous) => {
+                    assert_eq!(&portraits, previous, "the physical layout is signal-independent");
+                }
+                None => expected = Some(portraits),
+            }
+            let id = art.backdrop.as_ref().unwrap().2.id();
+            assert!(
+                output.shapes.iter().any(|clipped| matches!(
+                    &clipped.shape,
+                    egui::Shape::Mesh(mesh) if mesh.texture_id == id && mesh.calc_bounds() == screen
+                )),
+                "the game backdrop still fills the same panel"
+            );
+            assert_eq!(art.backdrop.as_ref().unwrap().2.size(), [256, 224]);
+            output.drop_without_applying_deltas();
+            assert_eq!(art.menu_canvas(screen, false), screen, "Stretch off is unchanged");
+            art.backdrop_shape.crop = false;
+            assert_eq!(art.menu_canvas(screen, true), screen, "16:9 is unchanged");
+        }
+    }
+
+    #[test]
+    fn the_4_3_projection_includes_text_vertices_and_preserves_their_uvs() {
+        fn meshes(ctx: &egui::Context, mut output: egui::FullOutput) -> Vec<egui::epaint::Mesh> {
+            let shapes = std::mem::take(&mut output.shapes);
+            let primitives = ctx.tessellate(shapes, output.pixels_per_point);
+            output.drop_without_applying_deltas();
+            primitives
+                .into_iter()
+                .map(|primitive| {
+                    let egui::epaint::Primitive::Mesh(mesh) = primitive.primitive else {
+                        panic!("text should tessellate into a mesh");
+                    };
+                    mesh
+                })
+                .collect()
+        }
+
+        let ctx = measuring_context();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 720.0));
+        let mut art = Art::empty();
+        art.backdrop_shape.crop = true;
+        let canvas = art.menu_canvas(screen, true);
+        let mut list = DrawList::new();
+        list.text(300.0, 300.0, "MENU", 30.0, palette::BLACK, ssd_menus::Align::Left);
+        let output =
+            ctx.run_ui(egui::RawInput { screen_rect: Some(canvas), ..Default::default() }, |ui| {
+                paint(ui, canvas, &list, &mut art);
+            });
+        let before = meshes(&ctx, output);
+        let output =
+            ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| {
+                paint_menu(ui, screen, &list, &mut art, true);
+            });
+        let after = meshes(&ctx, output);
+        assert_eq!((before.len(), after.len()), (1, 1));
+        assert_eq!(before[0].texture_id, after[0].texture_id);
+        assert_eq!(before[0].vertices.len(), after[0].vertices.len());
+        let projection = egui::emath::RectTransform::from_to(canvas, screen);
+        for (source, target) in before[0].vertices.iter().zip(&after[0].vertices) {
+            assert!((projection * source.pos - target.pos).length() < 0.001);
+            assert_eq!(source.uv, target.uv);
+            assert_eq!(source.color, target.color);
+        }
+    }
+
+    #[test]
+    fn the_quit_question_pointer_inverts_the_4_3_menu_projection() {
+        let ctx = measuring_context();
+        let screen = egui::Rect::from_min_size(egui::pos2(24.0, 40.0), egui::vec2(1280.0, 720.0));
+        let mut art = Art::empty();
+        art.backdrop_shape.crop = true;
+        let mut question = crate::quit_confirm::QuitConfirm::default();
+        let list = question.scene();
+        let (x, y) = list
+            .ops()
+            .iter()
+            .find_map(|op| match op {
+                Op::Text { x, y, text, .. } if text == "Yes" => Some((*x, *y)),
+                _ => None,
+            })
+            .unwrap();
+        let canvas = art.menu_canvas(screen, true);
+        let projection = egui::emath::RectTransform::from_to(canvas, screen);
+        // Near the top of the answer, not its centre: the old unprojected hit test misses this point.
+        let at = projection * Fit::new(canvas).point(x, y - 20.0);
+        let games = [crate::canvas::GameImage {
+            id: egui::TextureId::User(42),
+            width: 256,
+            height: 224,
+            pixel_aspect: 8.0 / 7.0,
+        }];
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut answer = None;
+        for events in [vec![egui::Event::PointerMoved(at)], vec![button(true), button(false)]] {
+            let output = ctx.run_ui(
+                egui::RawInput { screen_rect: Some(screen), events, ..Default::default() },
+                |ui| {
+                    let layer = crate::ui::Layer { list: &list, art: &mut art, menu: true };
+                    crate::ui::draw_game(ui, &games, Some(layer), true);
+                    answer = crate::ui::quit_confirm_pointer(ui, &mut question);
+                },
+            );
+            output.drop_without_applying_deltas();
+        }
+        assert_eq!(answer, Some(crate::quit_confirm::Outcome::Quit));
     }
 
     /// The egui context the menus' text is measured with: the theme's fonts, laid out once. The

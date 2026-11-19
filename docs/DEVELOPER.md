@@ -406,6 +406,13 @@ window's crop in 4:3, rather than squeezing the whole widescreen field into the 
 when the field or video choices change, so previewing and reverting Aspect while a menu is open stays consistent with live
 play. Window screenshots and UI snapshots use the same backdrop.
 
+With Android's Stretch picture and Aspect 4:3, HD menus are first drawn on a 4:3 canvas, then projected into the same
+destination as the cropped game. This also applies in Fullscreen: a 4:3 CRT can receive a 16:9 framebuffer and scale it
+physically, so fitting the menu to the framebuffer alone makes square portraits look tall. The projection includes
+tessellated text, portraits, cards, window frames and clipping, without changing their layout or proportions on the
+4:3 canvas. The game picture, frozen backdrop pixels and field overlays are unchanged, as are menus with Stretch off
+or Aspect 16:9. Window screenshots use the same projection, and the quit question's pointer uses its inverse.
+
 The Accessibility page (this PC, keys `access.text_size`, `access.contrast`, `access.cursor`) changes how all the HD menus look (Menu, Items, Cheats,
 Options and the notices), never the game's own picture or Classic: Text size (Large makes every text a quarter bigger where there
 is room beside it and inside its window, and never less than drawn), High contrast (white windows, black text and frame, black
