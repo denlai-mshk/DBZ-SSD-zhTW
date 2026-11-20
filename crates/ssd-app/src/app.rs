@@ -1089,6 +1089,7 @@ enum Draw {
 /// the picture of a fast-forward's batch is that of its last frame.
 fn note_view(state: &mut WindowState, machine: &Machine, draw: Draw) {
     let Some(hd) = state.hd.as_mut() else { return };
+    hd.prepare_view(machine.wram(), state.video.narrow);
     // The transformation's lightning, by the watch of its voice: none for a frame the watch did not note (a state loaded)
     hd.set_ssj_lightning(state.ssj_watch.lightning_at(machine.frame_count()));
     if draw == Draw::Skip {

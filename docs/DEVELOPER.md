@@ -150,6 +150,20 @@ the town, so `FieldState::in_room` reads the size and the grid from the table re
 (after a load, a battle or a scene), `$06` (after a flight) or `$05`: the map the party walks back to after a building
 (`$01`), where it stays until the next battle, so the art is drawn in all three.
 
+### Fly/Land transition in the 4:3 view
+
+Fly/Land still run the original menu plan and animation. From the command's
+`Entry::Fly` / `Entry::Land` choice through `Curtain::Lifted` (including the
+closing screen before `field_free`) and a short NMI drain tail after
+`field_free`, the app suppresses the native field faces and windows on BG1/BG3 in
+the render log, not in emulated VRAM. BG2, OBJ, scroll, Mode 7, and the original
+joypad timeline remain unchanged. The presentation switch invalidates shared
+pictures and is also applied to pipelined drawing. Classic and the 16:9
+presentation do not opt into these changes.
+
+Focused regressions: `cargo test -p ssd-hd --lib hide_field_ui` and
+`cargo test -p ssd-game --lib travel_presentation`.
+
 ## Keys
 
 Arrows = D-pad, X = A, Z = B, S = X, A = Y, Q = L, W = R, Enter = Start, Right Shift = Select.

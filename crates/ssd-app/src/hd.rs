@@ -578,6 +578,11 @@ impl Hd {
         self.wide.note(wram, log)
     }
 
+    /// Presentation belongs to the renderer, not to the emulated game's menu state.
+    pub fn prepare_view(&mut self, wram: &[u8], narrow: bool) {
+        self.wide.set_hide_field_ui(narrow && self.driver.travel_transition(wram));
+    }
+
     /// The 16:9 view of the frame that just ran as the Enhanced picture (see [`WideRun::note_hd_shared`]): a frame whose inputs
     /// are those of the picture before is not drawn again.
     pub fn note_frame_hd_shared(
