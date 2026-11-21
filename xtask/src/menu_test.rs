@@ -2547,6 +2547,24 @@ fn items_suite(rom: &[u8], base: &[u8], only: &[String], out: &mut String) -> an
             }
         }
     }
+    for &(name, call, after) in &GAME_OVER_SCENARIOS {
+        if !only.is_empty() && !only.iter().any(|o| o == name) {
+            continue;
+        }
+        ran += 1;
+        let mut report = Report::default();
+        if let Err(error) = game_over_scenario(rom, base, call, after, &mut report) {
+            report.check(false, &format!("the scenario failed: {error:#}"));
+        }
+        let ok = report.passed();
+        all_ok &= ok;
+        writeln!(out, "{} {name}", if ok { "ok  " } else { "FAIL" })?;
+        for (passed, what) in &report.lines {
+            if !passed {
+                writeln!(out, "       - {what}")?;
+            }
+        }
+    }
     writeln!(
         out,
         "menu-test items: {ran} scenarios, {}",
@@ -2660,6 +2678,180 @@ fn round_trip(rom: &[u8], base: &[u8], out: &mut String) -> anyhow::Result<bool>
         if same { "is the same" } else { "differs" },
     )?;
     Ok(same)
+}
+
+// --- a loss at the first Raditz battle, then the title (suite `items`, `game-over-*`) ---------------------------
+
+/// What the title does after the Game Over of a `game-over-*` scenario.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AfterGameOver {
+    /// Continue of slot 1, the save the run was on.
+    Continue,
+    /// New game.
+    NewGame,
+}
+
+/// The Game Over scenarios by name: whether Gohan is called in the battle before it is lost, and what follows.
+const GAME_OVER_SCENARIOS: [(&str, bool, AfterGameOver); 3] = [
+    ("game-over-continue", false, AfterGameOver::Continue),
+    ("game-over-gohan", true, AfterGameOver::Continue),
+    ("game-over-new-game", false, AfterGameOver::NewGame),
+];
+
+/// The story's Gohan (`keeper::GOHAN`), and the encounter group of the first Raditz battle, where he can be called.
+const GOHAN: u8 = 0x1A;
+const RADITZ_GROUP: u8 = 5;
+/// `game_mode`: the Game Over screen, and the title as the boot enters it (`docs/re/data/scenes.md`).
+const GAME_OVER_MODE: u8 = 0x0D;
+const TITLE_MODE: u8 = 0x87;
+
+/// A loss at the first Raditz battle and the title after it. The save crafted from the base (its party has Goku) has the
+/// story's Gohan and two Bulmas, and what scene 0 starts the forced fight with Raditz on (`docs/re/data/scenes.md`): the
+/// party on its spot of map 0, story flag 3 set and `0x0B` clear, Goku at level 6. Its Continue binds the bag; the scene
+/// is played to the battle with A, Gohan is called when `call`, the party's HP is set to 1 and the battle is lost; a
+/// button leaves the Game Over screen and the title continues slot 1 or starts a new game. A Continue gives back the bag
+/// of the save (every unit, Gohan too), a new game has none of the lost run's units. No replay can hold this run: a
+/// recording runs without hooks, and the button that leaves the Game Over screen is one (`cheats::GAME_OVER_LOOP`).
+fn game_over_scenario(
+    rom: &[u8],
+    base: &[u8],
+    call: bool,
+    after: AfterGameOver,
+    r: &mut Report,
+) -> anyhow::Result<()> {
+    let game = ssd_catalogue::game::Game::from_rom(rom)?;
+    let crafted = craft_save(rom, base, &[GOHAN, 2, 2], None)?;
+    let mut file = ssd_save::SaveFile::from_bytes(&crafted)?;
+    let mut slot = file.slot(0)?;
+    let scene = [
+        ("map", "0"),
+        ("leader", "2160,2688"),
+        ("follower", "2032,2560"),
+        ("flags", "+3,-0x0B"),
+        ("goku.level", "6"),
+    ];
+    for (field, value) in scene {
+        save::apply(&mut slot, Some(&game), field, value)?;
+    }
+    file.set_slot(0, &slot)?;
+    let catalogue = ssd_catalogue::Catalogue::from_rom(rom)?;
+    let labels = ssd_catalogue::menu_labels(&catalogue);
+    let mut saves = MemorySaveStore::default();
+    saves.0.insert("sav".to_owned(), file.as_bytes().to_vec());
+    let mut machine = Machine::new(rom.to_vec(), Box::new(saves))?;
+    enhanced_hooks(&mut machine);
+    let driver = Driver::with_bag(labels, Rules::default(), Sidecar::empty())
+        .with_cheats(ssd_menus::cheats::CheatSidecar::empty());
+    let mut h = Harness::new(machine, driver);
+    let title_continue =
+        scripts::parse_timeline(&save::continue_prefix(0)).map_err(anyhow::Error::msg)?;
+    for &pad in &title_continue {
+        h.frame(pad)?;
+    }
+    h.frames(30)?;
+    let (saved, _) = bag_summary(&h);
+    r.check(
+        saved == [(GOHAN, 1), (2, 2)],
+        &format!("the Continue binds the save's bag: {saved:?}"),
+    );
+
+    // The scene to the battle: A on its messages.
+    let probe_labels = Labels::default();
+    let mut in_battle = false;
+    for frame in 0..12_000 {
+        let probe = ssd_game::menu::MenuProbe::new(h.machine.wram(), &probe_labels);
+        if probe.battle_command() && h.byte(d::ENCOUNTER_GROUP_INDEX) == RADITZ_GROUP {
+            in_battle = true;
+            break;
+        }
+        let pad = if frame % 24 < 4 && !probe.field_free() { a() } else { Joypad::default() };
+        h.frame(pad)?;
+    }
+    anyhow::ensure!(in_battle, "no command window of the first Raditz battle");
+    if call {
+        battle_use(&mut h, r, 0)?;
+        h.answer()?;
+        h.frames(SETTLE)?;
+        r.check(units(&h, GOHAN) == 0, "Gohan is called in the battle");
+    }
+
+    // The loss: the party at 1 HP, A on everything, the HD's screens left with Cancel.
+    for row in 0..9_u32 {
+        let record = d::PARTY_RECORDS + 32 * row;
+        if h.byte(record) & 0x80 != 0 {
+            h.machine.write_wram(record + 3, &1_u16.to_le_bytes())?;
+        }
+    }
+    let mut over = false;
+    for frame in 0..20_000 {
+        if h.byte(d::GAME_MODE) & 0x7F == GAME_OVER_MODE {
+            over = true;
+            break;
+        }
+        if h.driver.curtain() == Curtain::Up {
+            h.driver.key(Key::Cancel, h.machine.wram());
+        }
+        h.frame(if frame % 24 < 4 { a() } else { Joypad::default() })?;
+    }
+    anyhow::ensure!(over, "the battle is not lost");
+    let mut waited = 0;
+    while h.machine.hook_stat(ssd_game::cheats::GAME_OVER_LOOP).calls == 0 {
+        anyhow::ensure!(waited < 1_200, "the Game Over screen does not reach its last loop");
+        h.frame(Joypad::default())?;
+        waited += 1;
+    }
+    h.press(a())?;
+    let mut titled = false;
+    for _ in 0..600 {
+        h.frame(Joypad::default())?;
+        if h.byte(d::GAME_MODE) == TITLE_MODE {
+            titled = true;
+            break;
+        }
+    }
+    anyhow::ensure!(titled, "a button on the Game Over screen does not go back to the title");
+
+    match after {
+        AfterGameOver::Continue => {
+            for &pad in &title_continue {
+                h.frame(pad)?;
+            }
+            h.frames(600)?;
+            let (stacks, list) = bag_summary(&h);
+            r.check(
+                stacks == saved,
+                &format!("the Continue gives back the save's bag {saved:?}: {stacks:?}"),
+            );
+            r.check(list_is_projection(&h), &format!("the list is the bag's projection: {list:?}"));
+        }
+        AfterGameOver::NewGame => {
+            let title_new = scripts::parse_timeline("1700 -\n4 start\n60 -\n4 start\n100 -\n")
+                .map_err(anyhow::Error::msg)?;
+            for pad in title_new {
+                h.frame(pad)?;
+            }
+            let mut field = false;
+            for frame in 0..30_000 {
+                let probe = ssd_game::menu::MenuProbe::new(h.machine.wram(), &probe_labels);
+                if probe.field_free() && probe.field_mode() && h.driver.bag().is_some() {
+                    field = true;
+                    break;
+                }
+                let pad = if frame % 24 < 4 { a() } else { Joypad::default() };
+                h.frame(pad)?;
+            }
+            anyhow::ensure!(field, "the new game does not reach its field with a bag");
+            h.frames(60)?;
+            let (stacks, list) = bag_summary(&h);
+            r.check(
+                units(&h, GOHAN) == 0 && units(&h, 2) == 0,
+                &format!("the new game has none of the lost run's units: {stacks:?}"),
+            );
+            r.check(list_is_projection(&h), &format!("the list is the bag's projection: {list:?}"));
+        }
+    }
+
+    Ok(())
 }
 
 /// Bubbles, Escape and the Dragon Radar are used through the original's own effects, one unit each, from the

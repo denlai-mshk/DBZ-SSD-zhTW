@@ -1308,6 +1308,187 @@ mod tests {
             assert_eq!((is_battle(&wram), is_animation(&wram)), (battle, animation), "{mode:02X}");
         }
     }
+
+    /// With the ROM (`SSD_ROM_PATH`), the HD pack (`SSD_HD_PACK`, the installed pack's folder: the one holding
+    /// `hdpack.toml`) and the reference replays of this core (`SSD_REPLAY_DIR`, holding `battle.ssdreplay`, made by
+    /// `make-replays`): in the opening (`battle` frames 2850 to 2862) Goku's portrait has speed lines of its palette
+    /// beside it, and the sprites are one cluster the pack has art for in four frames of the lines
+    /// (`fgfx-3561c14c6f`, `fgfx-27d9a11210`, `fgfx-0796d34868`, `fgfx-b041cfa16b`), a Goku of their own in each:
+    /// drawn over the portrait's picture, his face changed every few frames. The box of his portrait (x 82 to 113,
+    /// y 119 to 150 of the wide view at 1x) is now one picture in all of them.
+    #[test]
+    #[ignore = "needs the ROM (SSD_ROM_PATH), the HD pack (SSD_HD_PACK) and the replays (SSD_REPLAY_DIR)"]
+    fn the_openings_goku_is_one_picture_while_his_speed_lines_move() {
+        let rom = std::fs::read(std::env::var("SSD_ROM_PATH").expect("SSD_ROM_PATH")).unwrap();
+        let rom = ssd_rom::normalize(&rom, None).unwrap().bytes;
+        let pack = PathBuf::from(std::env::var("SSD_HD_PACK").expect("SSD_HD_PACK"));
+        let replays = PathBuf::from(std::env::var("SSD_REPLAY_DIR").expect("SSD_REPLAY_DIR"));
+        let replay = replays.join("battle.ssdreplay");
+        let shots: Vec<(String, PathBuf, u64)> =
+            (2850..=2862).map(|frame| (format!("f{frame}"), replay.clone(), frame)).collect();
+        let dir = tempfile::tempdir().unwrap();
+        let mut printed = Vec::new();
+        let missing = run_shots(&rom, &pack, dir.path(), 2, &shots, true, &mut printed).unwrap();
+        assert_eq!(missing, 0, "{}", String::from_utf8_lossy(&printed));
+        let mut looks = std::collections::BTreeSet::new();
+        for (label, _, _) in &shots {
+            let png = std::fs::read(dir.path().join(format!("{label}-art.png"))).unwrap();
+            let (width, height, rgba) = ssd_hd::png::read_rgba(&png).unwrap();
+            assert_eq!((width, height), (744, 478), "the wide view at 2x");
+            let portrait: Vec<u8> = (2 * 119..2 * 151)
+                .flat_map(|y| {
+                    let at = (y * width as usize + 2 * 82) * 4;
+                    rgba[at..at + 2 * 32 * 4].to_vec()
+                })
+                .collect();
+            let colours: std::collections::BTreeSet<&[u8]> = portrait.chunks(4).collect();
+            assert!(
+                colours.len() > 50,
+                "{label}: a portrait in the box ({} colours)",
+                colours.len()
+            );
+            looks.insert(portrait);
+        }
+        assert_eq!(looks.len(), 1, "Goku's portrait in the 13 frames");
+    }
+
+    /// The last fight with Frieza (map 24, the place of `tools/saves/secrets.sh`'s `ssj-frieza`): Piccolo and Krillin at
+    /// 1 HP, Goku at level 47 knowing the Kaioken (unit `$39`) and the hand pinned with the 必 card third. The script takes
+    /// the Kaioken for Goku (Atk., Pick, Goku, the third card, the fifth move, Frieza) and then presses A: Goku's
+    /// Kaioken is applied, Krillin falls to Frieza and Goku turns Super Saiyan in that turn.
+    const KAIOKEN_THEN_SUPER_SAIYAN: &str = "\
+[[chapter]]
+id = \"kaioken_ssj\"
+name = \"Kaioken then Super Saiyan\"
+map = 24
+leader = [2100, 2592]
+follower = [1972, 2472]
+party = [{ character = 1, level = 40 }, { character = 2, level = 40 }, { character = 3, level = 30 },
+         { character = 7, level = 40 }, { character = 0, level = 47 }]
+flags = [0, 1, 2, 3, 7, 8]
+";
+    const KAIOKEN_THEN_SUPER_SAIYAN_EDITS: [(&str, &str); 9] = [
+        ("piccolo.hp", "1"),
+        ("krillin.hp", "1"),
+        ("page:B0", "00"),
+        ("scene", "0"),
+        ("image:2A0", "01020307FF"),
+        ("image:303", "3C00"),
+        ("image:30A", "3C00"),
+        ("image:01", "39"),
+        ("page:41", "d40505050100dc0504020300e40508040500ec0507070600f40508080000"),
+    ];
+    const KAIOKEN_THEN_SUPER_SAIYAN_SCRIPT: &str = "repeat 80\n2 a\n4 -\nend\n46 -\n2 a\n40 -\n2 a\n40 -\n2 a\n40 -\n\
+        2 right\n30 -\n2 right\n30 -\n2 a\n60 -\n2 down\n30 -\n2 down\n30 -\n2 down\n30 -\n2 down\n30 -\n2 a\n60 -\n\
+        repeat 1500\n2 a\n4 -\nend\n";
+
+    /// With the ROM (`SSD_ROM_PATH`) and the HD pack (`SSD_HD_PACK`, the installed pack's folder; with `SSD_ART_OVERRIDE`,
+    /// a data folder's `art-override` put over it as the app does): Goku uses the Kaioken and turns Super Saiyan in the
+    /// same turn ([`KAIOKEN_THEN_SUPER_SAIYAN`], a save made here from a chapter and `save-edit`'s fields). The trigger
+    /// clears `$0C36` and leaves the Kaioken's multiplier `$01EF` until the next turn; counted as the Kaioken, the frames of
+    /// the transformation (battle phase `$1A`) whose palette flashes the Kaioken's red refused the Super Saiyan art of
+    /// his close-up and his powering up, and the game's sprites were drawn between the pictures. Every pose of Goku the
+    /// pack has art for is drawn from art in every frame of the transformation, and the Kaioken's first close-up (the
+    /// powering up `battle-goku-ssj-020`'s pixels, before the transformation) is still never drawn from the Super
+    /// Saiyan's art: the normal Goku's picture of `art-override\goku\` with the folder, the game's sprite without it
+    /// (patch 0050). About a minute.
+    #[test]
+    #[ignore = "needs the ROM (SSD_ROM_PATH) and the HD pack (SSD_HD_PACK)"]
+    fn goku_turning_super_saiyan_in_the_turn_of_his_kaioken_is_drawn_from_art_in_every_frame() {
+        let rom = std::fs::read(std::env::var("SSD_ROM_PATH").expect("SSD_ROM_PATH")).unwrap();
+        let rom = ssd_rom::normalize(&rom, None).unwrap().bytes;
+        let pack =
+            open_pack(&PathBuf::from(std::env::var("SSD_HD_PACK").expect("SSD_HD_PACK"))).unwrap();
+        let overrides = std::env::var_os("SSD_ART_OVERRIDE").map(PathBuf::from);
+        let pack = match &overrides {
+            Some(dir) => Arc::new(Arc::unwrap_or_clone(pack).with_art_override(dir)),
+            None => pack,
+        };
+        let game = crate::save::Game::from_rom(&rom).unwrap();
+        let chapter = ssd_mod::chapter::parse(KAIOKEN_THEN_SUPER_SAIYAN).unwrap().remove(0);
+        let mut file = ssd_mod::chapter::synthesize(&game, &chapter).unwrap().save;
+        let mut slot = file.slot(0).unwrap();
+        for (field, value) in KAIOKEN_THEN_SUPER_SAIYAN_EDITS {
+            crate::save::apply(&mut slot, Some(&game), field, value).unwrap();
+        }
+        file.set_slot(0, &slot).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let (sav, script, out) =
+            (dir.path().join("k.sav"), dir.path().join("k.txt"), dir.path().join("k.ssdreplay"));
+        std::fs::write(&sav, file.as_bytes()).unwrap();
+        std::fs::write(&script, KAIOKEN_THEN_SUPER_SAIYAN_SCRIPT).unwrap();
+        let args = crate::save::ReplayArgs {
+            save: sav,
+            script,
+            output: out.clone(),
+            slot: 0,
+            title: false,
+            cheats: false,
+            bind: None,
+        };
+        crate::save::replay_from_save(&rom, &args, &mut Vec::new()).unwrap();
+
+        let objects = pack.art.objects();
+        let id_of = |at: u32| objects[at as usize].id.as_str();
+        let goku_keys: std::collections::BTreeSet<u64> =
+            objects.iter().filter(|o| o.id.starts_with("battle-goku")).map(|o| o.key).collect();
+        let powering_up = objects.iter().find(|o| o.id == "battle-goku-ssj-020").unwrap().key;
+        let replay = read_replay(&out, &rom).unwrap();
+        let mut machine = replay.power_on(rom.clone()).unwrap();
+        machine.set_line_log(true);
+        let mut run = WideRun::new(&rom);
+        run.set_art(Some(Arc::clone(&pack)));
+        run.set_tally(true);
+        let options = HdOptions { scale: 1, look: Look::Crisp };
+        let (mut transformation, mut close_up, mut ended) = (0, 0, false);
+        let mut wrong = Vec::new();
+        while machine.frame_count() < replay.frames() && !ended {
+            machine.run_frame_with(&mut |f| replay.input(f), &mut NullAudio).unwrap();
+            let frame = machine.frame_count() - 1;
+            let wram = machine.wram();
+            let (phase, multiplier, kaioken) = (wram[0xAB], wram[0x1EF], wram[0xC36]);
+            let super_saiyan = wram[0xB01] == 0x3B;
+            let transforming = phase == 0x1A;
+            // the Kaioken's frames before the transformation: its bit or its multiplier, Goku not yet $3B
+            let kaioken_frame =
+                !super_saiyan && !transforming && (kaioken & 0x80 != 0 || multiplier != 0);
+            if !transforming && !kaioken_frame {
+                ended |= super_saiyan && transformation > 0;
+                run.note(wram, machine.frame_log());
+                continue;
+            }
+            if transforming {
+                assert_ne!(
+                    multiplier, 0,
+                    "frame {frame}: the Kaioken's multiplier is left in the transformation"
+                );
+                transformation += 1;
+            }
+            let _ = run.note_hd(wram, machine.frame_log(), options);
+            // (a fighter's sprites are also a group of the field, which finds no art in a battle)
+            for pose in
+                run.art_stats().poses.iter().filter(|p| p.fighter && goku_keys.contains(&p.key))
+            {
+                if transforming && !pose.matched {
+                    wrong.push(format!(
+                        "frame {frame}: pose {:016x} of Goku drawn from the game's sprites",
+                        pose.key
+                    ));
+                }
+                if kaioken_frame && pose.key == powering_up {
+                    close_up += 1;
+                    let drawn = pose.art.filter(|_| pose.matched).map(id_of);
+                    let want = overrides.as_ref().map(|_| "battle-goku-ssj-020@goku");
+                    if drawn != want {
+                        wrong.push(format!("frame {frame}: the Kaioken's close-up drawn from {drawn:?}, not {want:?}"));
+                    }
+                }
+            }
+        }
+        assert!(transformation > 300, "the transformation is played ({transformation} frames)");
+        assert!(close_up > 30, "the Kaioken's first close-up is played ({close_up} frames)");
+        assert!(wrong.is_empty(), "{} frames:\n{}", wrong.len(), wrong.join("\n"));
+    }
 }
 
 /// What `hd-art diff` found in one replay.

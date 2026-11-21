@@ -35,6 +35,8 @@ LV20 = ['4699:7E0B02=14', '4699:7E0B05=E703', '4699:7E0B0C=E703', '4699:7E0B22=1
 SHOP = ['3700:7E0024=01', '3700:7E0025=03', '3700:7E0716=A1', '3700:7E0D87=01', '3700:7E01BD=07',
         '3700:7E01B4=E703']
 GRAV = ['2304:7E01D8=50', '2304:7E1648=80']       # the gravity room scene (the old grav.script pokes)
+# The training ground (landing spot 8), teleported in as Baba's shop is (SHOP)
+TRAIN = ['3700:7E0024=01', '3700:7E0025=03', '3700:7E0716=A1', '3700:7E0D87=00', '3700:7E01BD=08']
 
 # Save states made before the runs (xtask shots SCRIPT --upto N --state-out; 'sram' and 'wram' as a run's)
 STATES = {
@@ -160,6 +162,8 @@ RUNS = {
                      wram=SHOP + ['3700:7E0100=0080018010401744', '3700:7E01B2=04']),
     'st_buy1': dict(script='scenes/shop_town/buy1.txt', lo=3690, hi=5000, wram=SHOP),
     'st_misc1': dict(script='scenes/shop_town/misc1.txt', lo=3690, hi=4780, wram=SHOP),
+    # (the training ground: str3:0x25 YES / NO, then str3:0x27 Fight / Raise KI, the cursor moved down and up on each)
+    'tr_choice': dict(script='scenes/training/train1.txt', lo=3690, hi=4900, wram=TRAIN),
     # ---- minigames, special screens
     'mg_kk': dict(script='scenes/minigames/kk_yes.txt', lo=4400, hi=4900),
     'mg_kk_b': dict(script='scenes/minigames/kk_b.txt', lo=4400, hi=5500,
@@ -604,6 +608,21 @@ SCENARIOS = [
     sc('st_guard_misc1', 'st_misc1', 'guard', 'shop_town',
        '卜卦婆婆的店（交談、調查、選單）：目前乾淨',
        [no(CLEAN)]),
+    # (the training ground's choice, str3:0x27: the game draws its cursor ▶ in column 14 (03:A3F3, LDX #$05DC), the
+    # choices from column 16, a blank cell between; the overlay took only a cursor right before a letter, and painted
+    # it over. The cursor's cell must show as in the original on the row chosen: 2x box of column 14, rows 23 and 25)
+    sc('tr_menu_cursor', 'tr_choice', 'fixed', 'shop_town',
+       '修業場選單「要選哪個？　戰鬥修業／氣勢修業」：游標 ▶（第 14 欄，和選項隔一格空白）在選到的那一列照原版顯示，'
+       '不被底紙蓋掉（4460–4620 選第一列、4628–4824 選第二列）；整段沒有英文殘字',
+       [no(ENGLISH + WRONG),
+        probe('tr_fight_cursor', 'equal', (340, 366, 356, 382), (4460, 4620), a='zh', b='orig'),
+        probe('tr_raise_cursor', 'equal', (340, 398, 356, 414), (4628, 4824), a='zh', b='orig')],
+       severity='high'),
+    # (the YES / NO before it, str3:0x25: the cursor of 01:D54C in column 20, right before YES and NO in column 21)
+    sc('tr_yesno_cursor', 'tr_choice', 'guard', 'shop_town',
+       '修業場「要修業嗎？　是／否」：游標 ▶（第 20 欄，緊貼選項）選「否」（4256–4332）與選「是」（4338–4416）時都照原版顯示',
+       [probe('tr_yes_cursor', 'equal', (436, 398, 452, 414), (4338, 4416), a='zh', b='orig'),
+        probe('tr_no_cursor', 'equal', (436, 430, 452, 446), (4256, 4332), a='zh', b='orig')]),
 
     # ======================================================== minigames, special screens
     sc('mg_battle89_flash', 'mg_kk', 'fixed', 'minigames',

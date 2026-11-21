@@ -298,6 +298,10 @@ pub(crate) struct Pose {
     /// A fighter drawn as BG tiles (see `ArtState::bg_fighters`): `org` is in frame coordinates,
     /// `palette` is the BG palette number, the pose has no sprites.
     pub bg: bool,
+    /// How the art the pose is drawn from was found, once the pose is placed (`ArtState::find_poses`): the art made
+    /// for its exact pixels (or for them mirrored), for its shape, or holding it ([`super::ArtSource::None`] for a
+    /// candidate, and for a ground shadow).
+    pub source: super::ArtSource,
 }
 
 impl Pose {
@@ -520,6 +524,7 @@ pub(super) fn assemble(
         excluded: 0,
         recolour: None,
         bg: false,
+        source: super::ArtSource::None,
     })
 }
 
@@ -545,6 +550,7 @@ pub(crate) fn bg_pose(arr: Vec<u8>, w: usize, h: usize, org: (i32, i32), palette
         excluded: 0,
         recolour: None,
         bg: true,
+        source: super::ArtSource::None,
     }
 }
 

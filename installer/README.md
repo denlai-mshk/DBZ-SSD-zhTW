@@ -21,7 +21,11 @@
   - 資料夾裡有別的程式的 `uninstall.exe` 不影響安裝，也不會去動它（解除安裝程式用本程式專屬的檔名）。較早的版本把解除安裝程式叫 `uninstall.exe`：升級時只有它的版本資源 ProductName 是「七龍珠Z 超賽亞傳說 繁中版」才刪。
   - 「是不是同一個位置」走 `SamePath`：兩邊都存在時比磁碟序號與檔案編號（認得 subst 磁碟、8.3 短名、大小寫不同；檔案編號高低兩段都是 0 時不拿來比），否則比轉成完整長路徑、去掉結尾反斜線後的字串（不分大小寫）。
   - 安裝段落寫任何檔之前會再分類一次，只裝進 2～4。
-  - 重裝到和上次不同的位置、上次的位置有 `save\`：提醒存檔與 ROM 設定留在舊位置、不會自動搬過來，讓使用者決定。
+  - 重裝到和上次不同的位置、上次的位置有 `save\`：提醒存檔與 ROM 設定留在舊位置、不會自動搬過來，也說明舊位置的程式不會被移除、「新增或移除程式」會改指向新位置，不需要舊的那份時執行舊位置裡的 `uninstall-dbz-zhtw.exe`（存檔預設保留），讓使用者決定。上次的位置沒有 `save\`（沒開過遊戲）時不提醒，舊的那份一樣留著。
+- **從舊版升級（RC1、RC2 → 新版）**：每一版的識別都相同、都不帶版本：`APP_ID` `DBZ-SSD-zhTW`、「新增或移除程式」的機碼、本程式記上次位置的機碼、預設位置、exe 與解除安裝程式的檔名、標記檔。所以已經裝了舊版的玩家直接執行新版的安裝程式、用它帶出的上次位置，就落在上面分類的第 2 項「本程式的」，原地安裝：啟動器與解除安裝程式換成新版、標記檔寫回（`version=` 換成新的版號）、「新增或移除程式」的項目與捷徑原地改寫（不會多一份），`save\` 與 `hd-pack.zip` 不動。舊版放的檔和新版完全相同（標記檔、啟動器、解除安裝程式三個），所以沒有要清的舊檔。
+  - 偵測與顯示（`PrevInstall`，只讀現有的標記檔與登錄，沒有另外的機制）：位置上有 `state=installed` 的有效標記檔時算「已安裝」；「新增或移除程式」的項目指向這裡時用它的 `DisplayVersion`（例如 RC2）稱呼，否則稱「舊版」。歡迎頁第一段依上次的位置改成「偵測到已安裝的 RC2，這會原地升級為 RC3，存檔與 HD 美術包都會保留。」（同一版：「…這會在原位置重新安裝…」）；安裝時的詳細資訊與紀錄寫一行「偵測到已安裝的 RC2，原地升級為 RC3：<位置>（存檔與 HD 美術包保留）」（同一版：「在原位置重新安裝」）。解除過、只留下存檔的位置（`state=removed`）、免安裝版（另有「從免安裝版原地升級」那一行）、空資料夾都不顯示這段。
+  - 舊版裝在兩個不同的位置時（例如 RC1 在 A、RC2 裝到另一個 B）：B 那次安裝已經把「新增或移除程式」的項目與記下的位置改成 B，A 從那時起就不在項目裡；新版預設升級 B，A 原封不動（程式、標記檔、存檔都在），要移除就執行 A 裡的 `uninstall-dbz-zhtw.exe`。
+  - 啟動器的部分（不是安裝程式做的）：新版啟動器第一次開啟時，`%LOCALAPPDATA%\dbz-ssd-zhtw\app\` 裡舊版解開的遊戲本體由它清掉（`launcher/src/main.rs` 的 `clean_up`）；RC1 升上來、已有存檔的資料夾維持台灣版譯名（`settle_language`）。
   - 位置檢查（`CheckInstDir`）與 ROM／IPS 檢查（`CheckRomInputs`）各只有一份，選位置頁、ROM 頁與 `/S` 靜默安裝共用；靜默安裝不合就直接中止，見「命令列與結束碼」。
 - 頁面順序：歡迎 → 選安裝位置 → 選遊戲 ROM 與 IPS → HD 高畫質美術包 → 安裝 → 完成。
 - 歡迎頁第三段說明：安裝檔不含 ROM 和 HD 美術包；高畫質的畫面要靠 HD 美術包，可以選擇要不要下載，不下載也能玩、畫面是原版像素（與啟動器詢問視窗的說法相同）。
@@ -98,14 +102,21 @@ uninstall-dbz-zhtw.exe /S [/DELETEDATA] [/LOG=<紀錄檔>] [_?=<安裝資料夾>
 `tests/run_wine_tests.py` 在 macOS 上用 Wine 實際執行編出的安裝檔與解除安裝程式，從 macOS 那側檢查檔案、登錄與結束碼。Wine、拋棄式 prefix（測試會清空裡面的測試資料夾與登錄機碼）與 NSIS 3 的 `makensis` 的位置有預設值，可用參數或環境變數改（見腳本開頭）。
 
 ```
-python3 installer/tests/run_wine_tests.py                 # 49 個靜默情境（安裝、解除安裝的各種順序、FileId 讀值、標記檔打不開）
+python3 installer/tests/run_wine_tests.py                 # 53 個靜默情境（安裝、解除安裝的各種順序、FileId 讀值、標記檔打不開、從 RC1／RC2 升級）
 python3 installer/tests/run_wine_tests.py --auto-update   # 同上，安裝檔加 -DAUTO_UPDATE
 python3 installer/tests/run_wine_tests.py --ref <commit>  # 用舊 commit 的 installer/ 編（見下）
 python3 installer/tests/run_wine_tests.py --nsi <另一份 dbz-zhtw.nsi>   # 突變檢查用：那份要放在和 repo 一樣的 installer/、launcher/ 結構裡
-python3 installer/tests/run_wine_tests.py --gui --shots <資料夾>   # 15 個圖形介面情境，每頁截圖
+python3 installer/tests/run_wine_tests.py --gui --shots <資料夾>   # 16 個圖形介面情境，每頁截圖（升級時的歡迎頁見 g16）
 python3 installer/tests/run_wine_tests.py --gui --dpi 144     # 同上，prefix 暫時改成 DPI 144（150%），跑完改回並確認
 python3 installer/tests/check_data_list.py               # 不需要 Wine：啟動器與遊戲寫的檔名都在刪除清單或「刻意不列」名單裡
 ```
+
+- **升級情境 `v01`～`v04`**：先用**發行過的** RC1、RC2 安裝程式（`DBZ-SSD-zh-TW-RC1-setup.exe`、`-RC2-setup.exe`，不在 repo 裡，用 `--old-setups <資料夾>` 或環境變數 `DBZ_OLD_SETUPS` 指定，預設 `~/Tools/dbz-old-setups`；腳本核對 SHA-256 與 Release 的 `SHA256SUMS_public.txt` 相同；取得方式 `gh release download rc1 -R lming888/DBZ-SSD-zhTW -p '*setup.exe' -D <資料夾>`，rc2 同）靜默安裝，再把要測的安裝程式當成下一版（從它的 `installer/` 複製一份，`launcher/RELEASE_NAME` 改成 RC3、`RELEASE` 47，啟動器用替身）裝上去，不帶 `/D=`。找不到或檢查碼不對時這幾個情境算失敗，不會跳過。
+  - `v01`／`v02`：RC1／RC2 裝在預設位置、放進玩過的檔（存檔、設定、即時存檔、ROM 快取、美術覆蓋圖、語音、譯文表、語言標記、`hd-pack.zip`，以及 `%LOCALAPPDATA%\dbz-ssd-zhtw` 的檔）→ 新版：沒有建子資料夾；安裝資料夾最上層除了程式三個檔、`save\`、`hd-pack.zip` 沒有別的（「多餘」的判定）；啟動器 exe 與解除安裝程式換成新版的；標記檔 `version=v47`、`state=installed`；`HKCU\…\Uninstall` 底下只有 `DBZ-SSD-zhTW` 一個項目、`DisplayVersion` 是 RC3、`InstallLocation`／`UninstallString` 指向這裡；本程式的機碼只有一個、記下的位置是這裡；開始功能表資料夾正好兩個捷徑、桌面正好一個、最上層沒有舊捷徑；紀錄有「偵測到已安裝的 RC1，原地升級為 RC3：<位置>」；`save\` 一個位元組都沒變、`hd-pack.zip` 不變、`%LOCALAPPDATA%\dbz-ssd-zhtw` 沒被動；之後解除安裝（保留資料）照常、存檔還在。另外核對舊版安裝程式放的檔正好是那三個。
+  - `v03`：RC1 裝在 A、RC2 裝在 B（各自玩過）→ RC2 裝好時項目與記下的位置已是 B → 新版不帶 `/D=` 升級 B（同上各項），A 整個資料夾一個位元組都沒變、紀錄沒提到 A、預設位置沒被裝進去。
+  - `v04`：全新安裝只有程式三個檔、一個項目、紀錄沒有「偵測到已安裝」；同一版再裝一次紀錄寫「在原位置重新安裝」、不說升級。
+  - 驗到的是安裝程式本身的邏輯（裝到哪、寫了什麼、留下什麼、登錄與捷徑）。沒驗到的：新版真的啟動器（裝的是替身）、啟動器第一次開啟時清舊的遊戲本體與語言設定、Windows 本身的行為（檔案總管裡的捷徑、「設定 > 應用程式」、遊戲正開著時 exe 被鎖），以及歡迎頁的文字（圖形介面；靜默安裝不顯示歡迎頁）。
+  - 突變對照：把 `APP_ID` 改成帶版本的 `DBZ-SSD-zhTW-RC3`，`v01`～`v03` 失敗（多一個項目與機碼、裝到另一個預設位置、舊的 exe 沒被換）；拿掉 `PrevInstall` 的那一行紀錄，`v01`～`v04` 的紀錄檢查失敗。
 
 - 解除安裝的情境照「安裝與解除的順序」各做一個（`t01`～`t12`）。`t01`～`t09` 都檢查清單外的檔一個位元組都沒變（`t06` 檢查的是原本那一份整個沒變）、沒有裝進或覆蓋別人的東西，以及「新增或移除程式」的項目沒有指向跑不動的東西；「裝得回去」由 `t01`～`t04`、`t08`、`t09` 的重裝與 `t05` 的再裝再解除一輪驗證（`t06`、`t07` 沒有重裝）；沒勾刪除的情境另外檢查玩家存檔還在原本那個資料夾的 `save\saves\`。
 - `run_wine_tests.py` 一開始先跑 `check_data_list.py`，它失敗整個測試就失敗。標記檔的隱藏屬性：prefix 設了 `ShowDotFiles=Y`，Wine 才不會把點開頭的檔一律報成隱藏，`attrib` 讀到的 `H` 才是程式自己設的。

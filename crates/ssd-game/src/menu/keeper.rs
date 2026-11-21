@@ -39,6 +39,9 @@ const OBJECTS: usize = 40;
 const CONTINUE_MODE: u8 = 0x0E;
 /// `game_mode` of the menus (`$03`): the Continue's slot list and the Status screen (`docs/re/data/scenes.md`).
 const MENUS_MODE: u8 = 0x03;
+/// `game_mode` of the Game Over screen (`$0D`, `docs/re/data/scenes.md`). Left on a button (`cheats::GAME_OVER_LOOP`),
+/// it jumps to the boot (`00:8000`), which clears work RAM (the list too) and shows the title: the run is over.
+const GAME_OVER_MODE: u8 = 0x0D;
 
 /// One entry of the list as the keeper last wrote it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,6 +74,8 @@ pub struct Keeper {
     /// A load may still copy a save into work RAM: set by a bind and by the Continue screen, it lasts until the
     /// first list kept after the menus of the Continue ([`loading`]), the list where the game copied the save in.
     continued: bool,
+    /// The Game Over screen ([`GAME_OVER_MODE`]) was on at the last frame kept: the frame that leaves it unbinds the bag.
+    over: bool,
 }
 
 impl Keeper {
@@ -85,6 +90,7 @@ impl Keeper {
             front: None,
             sale: false,
             continued: false,
+            over: false,
         }
     }
 
@@ -191,8 +197,9 @@ impl Keeper {
         self.front = None;
         // A state loaded is not a load of a save: the bag is the state's, and no copy of a save follows, so a
         // window a bind or a Continue opened before the state is closed (a use that leaves another save's list
-        // after the state is a use).
+        // after the state is a use). A Game Over the state was loaded over is not the state's either.
         self.continued = false;
+        self.over = false;
         let mut events = vec![HostEvent::App { tag: BIND_TAG, payload }];
         events.extend(self.project(wram, labels, None));
         events
@@ -209,6 +216,19 @@ impl Keeper {
         sidecar: &Sidecar,
     ) -> Vec<HostEvent> {
         if self.bag.is_none() {
+            return Vec::new();
+        }
+        // A lost battle ends the run: the Game Over screen, then the boot clears work RAM for the title. Its empty list
+        // is not a use of every stack (taken as one, a unit of every stack was lost, and the Continue of the bound save
+        // kept that bag over the save's), so the bag waits on the screen and is unbound as the screen is left. It binds
+        // again on what the title loads, as at the first bind: the save continued (the sidecar's bag for it, else a
+        // rebuild from its list), or a new game's list.
+        if on_game_over(wram) {
+            self.over = true;
+            return Vec::new();
+        }
+        if self.over {
+            *self = Self::new(self.rules);
             return Vec::new();
         }
         // The game clears or loads the list in steps (a save being loaded, for one, passes through
@@ -486,6 +506,11 @@ fn list_is_sane(wram: &[u8], labels: &Labels) -> bool {
 /// Whether the game is on the Continue screen ([`CONTINUE_MODE`]): the list holds the page of the slot it shows.
 fn on_continue(wram: &[u8]) -> bool {
     wram.get(d::GAME_MODE as usize - 0x7E_0000).is_some_and(|mode| mode & 0x7F == CONTINUE_MODE)
+}
+
+/// Whether the game is on the Game Over screen ([`GAME_OVER_MODE`]).
+fn on_game_over(wram: &[u8]) -> bool {
+    wram.get(d::GAME_MODE as usize - 0x7E_0000).is_some_and(|mode| mode & 0x7F == GAME_OVER_MODE)
 }
 
 /// Whether the game is still in a load: the Continue screen ([`CONTINUE_MODE`]) or the menus it goes through
@@ -1185,5 +1210,198 @@ mod tests {
         map[mode] = 0;
         keeper.sync(&map, &labels, Some(&sram), &Sidecar::empty());
         assert_eq!(keeper.bag().unwrap().units_of(16), 13, "the copy adds nothing");
+    }
+
+    /// One frame of the keeper as the driver runs it (`Driver::frame`): a bind while the bag is not bound (`fresh` as the
+    /// field has it), else the list kept. The writes are applied to `ram`.
+    fn keep(
+        keeper: &mut Keeper,
+        ram: &mut [u8],
+        labels: &Labels,
+        sram: &[u8],
+        sidecar: &Sidecar,
+        fresh: bool,
+    ) -> Vec<HostEvent> {
+        let events = if keeper.bound() {
+            keeper.sync(ram, labels, Some(sram), sidecar)
+        } else {
+            keeper.bind(ram, labels, Some(sram), sidecar, fresh)
+        };
+        apply(ram, &events);
+        events
+    }
+
+    /// Work RAM of `objects` and the money in game mode `mode`, in the encounter group `group`.
+    fn wram_in(objects: &[u8], zeni: u16, mode: u8, group: u8) -> Vec<u8> {
+        let mut ram = wram_with(objects, zeni);
+        ram[d::GAME_MODE as usize - 0x7E_0000] = mode;
+        ram[d::ENCOUNTER_GROUP_INDEX as usize - 0x7E_0000] = group;
+        ram
+    }
+
+    /// The save of slot 1 the run is on: its list (Gohan, one Bulma: the bag's projection) and money, and the sidecar
+    /// keeping its bag (the story's Gohan, two Bulmas). Returns the battery save, the sidecar and the keeper bound to it
+    /// on the map.
+    fn run_on_the_save(labels: &Labels) -> (Vec<u8>, Sidecar, Keeper) {
+        let sram = sram_with(&[(0, &[26, 2], 40)]);
+        let mut saved = Bag::new(Rules::default());
+        saved.add(26, 0, class_of(labels, 26)).unwrap();
+        saved.add(2, 0, class_of(labels, 2)).unwrap();
+        saved.add(2, 0, class_of(labels, 2)).unwrap();
+        let mut sidecar = Sidecar::empty();
+        sidecar.store(0, checksum_of(&sram, 0), &saved);
+        let mut keeper = Keeper::new(Rules::default());
+        let mut map = wram_in(&[26, 2], 40, 0, 0);
+        keep(&mut keeper, &mut map, labels, &sram, &sidecar, true);
+        assert_eq!(keep(&mut keeper, &mut map, labels, &sram, &sidecar, true), Vec::new());
+        assert_eq!(keeper.bound_save().map(|(slot, _)| slot), Some(0));
+        assert_eq!(keeper.bag(), Some(&saved));
+        (sram, sidecar, keeper)
+    }
+
+    /// The game writes the list of `objects` (state words zero) and the money into `ram`, as a copy of a save does.
+    fn copy_in(ram: &mut [u8], objects: &[u8], zeni: u16) {
+        let fresh = wram_with(objects, zeni);
+        for (at, len) in [
+            (d::ITEM_LIST as usize - 0x7E_0000, LIST_BYTES),
+            (EXTRA as usize - 0x7E_0000, LIST_BYTES),
+            (d::ITEM_COUNT as usize - 0x7E_0000, 1),
+            (d::ZENI as usize - 0x7E_0000, 2),
+        ] {
+            ram[at..at + len].copy_from_slice(&fresh[at..at + len]);
+        }
+    }
+
+    /// The first Raditz battle (encounter group 5) on the save of [`run_on_the_save`], Gohan called first when `call`,
+    /// lost: the Game Over screen, then a button leaves it and the boot clears work RAM for the title. Returns the
+    /// title's work RAM.
+    fn lost_at_raditz(
+        call: bool,
+        labels: &Labels,
+        sram: &[u8],
+        sidecar: &Sidecar,
+        keeper: &mut Keeper,
+    ) -> Vec<u8> {
+        let mut battle = wram_in(&[26, 2], 40, 0x02, 5);
+        keep(keeper, &mut battle, labels, sram, sidecar, false);
+        if call {
+            // The original's use compacts Gohan's entry out of the list.
+            copy_in(&mut battle, &[2], 40);
+            keep(keeper, &mut battle, labels, sram, sidecar, false);
+            assert_eq!(keeper.bag().unwrap().units_of(26), 0, "Gohan was called");
+            assert_eq!(keeper.bag().unwrap().units_of(2), 2);
+        }
+        for mode in [0x8D, 0x0D, 0x0D] {
+            battle[d::GAME_MODE as usize - 0x7E_0000] = mode;
+            keep(keeper, &mut battle, labels, sram, sidecar, false);
+        }
+        // The boot: work RAM cleared (the list too), the title entered.
+        let mut title = wram_in(&[], 0, 0x87, 0);
+        for mode in [0x87, 0x07, 0x07] {
+            title[d::GAME_MODE as usize - 0x7E_0000] = mode;
+            keep(keeper, &mut title, labels, sram, sidecar, false);
+        }
+        title
+    }
+
+    /// The Continue of slot 1 from the title's work RAM `ram`: the slot list shows the save's page, the menus copy the
+    /// save in, and the map copies it in again. Returns the map's work RAM.
+    fn continue_slot_one(
+        mut ram: Vec<u8>,
+        labels: &Labels,
+        sram: &[u8],
+        sidecar: &Sidecar,
+        keeper: &mut Keeper,
+    ) -> Vec<u8> {
+        for (mode, copied) in [
+            (CONTINUE_MODE | 0x80, true),
+            (CONTINUE_MODE, false),
+            (MENUS_MODE, true),
+            (MENUS_MODE, false),
+            (0x80, true),
+            (0x00, false),
+            (0x00, false),
+        ] {
+            ram[d::GAME_MODE as usize - 0x7E_0000] = mode;
+            if copied {
+                copy_in(&mut ram, &[26, 2], 40);
+            }
+            keep(keeper, &mut ram, labels, sram, sidecar, mode & 0x7F == 0);
+        }
+        ram
+    }
+
+    /// The bag after the Continue of slot 1 that follows a loss at Raditz (Gohan called first when `call`).
+    fn continued_after_a_loss(call: bool) {
+        let labels = gohan_labels();
+        let (sram, sidecar, mut keeper) = run_on_the_save(&labels);
+        let title = lost_at_raditz(call, &labels, &sram, &sidecar, &mut keeper);
+        let map = continue_slot_one(title, &labels, &sram, &sidecar, &mut keeper);
+        let bag = keeper.bag().expect("the Continue binds the bag");
+        assert_eq!(bag.units_of(26), 1, "the story's Gohan of the save is back");
+        assert_eq!(bag.units_of(2), 2, "both Bulmas of the save are back");
+        assert_eq!(keeper.bound_save().map(|(slot, _)| slot), Some(0));
+        assert_eq!(read_list(&map), [(26, 0), (2, 0)], "the list shows the save's bag");
+    }
+
+    #[test]
+    fn a_continue_after_a_game_over_gives_back_the_bag_of_the_save() {
+        continued_after_a_loss(false);
+    }
+
+    #[test]
+    fn a_continue_after_a_game_over_with_gohan_called_gives_back_the_gohan_of_the_save() {
+        continued_after_a_loss(true);
+    }
+
+    #[test]
+    fn a_new_game_after_a_game_over_has_none_of_the_lost_runs_units() {
+        let labels = gohan_labels();
+        let (sram, sidecar, mut keeper) = run_on_the_save(&labels);
+        let mut ram = lost_at_raditz(false, &labels, &sram, &sidecar, &mut keeper);
+        // New game: the first story transition, then the field with the new game's (empty) list.
+        for mode in [0x87, 0x07, 0x80, 0x00, 0x00] {
+            ram[d::GAME_MODE as usize - 0x7E_0000] = mode;
+            keep(&mut keeper, &mut ram, &labels, &sram, &sidecar, mode & 0x7F == 0);
+        }
+        let bag = keeper.bag().expect("the new game binds its own bag");
+        assert_eq!(bag.stacks().len(), 0, "nothing of the lost run: {:?}", bag.stacks());
+        assert_eq!(keeper.bound_save(), None, "a new game has no save yet");
+        assert_eq!(read_list(&ram), [], "the new game's list stays its own");
+    }
+
+    #[test]
+    fn without_a_game_over_a_use_in_the_raditz_battle_takes_its_unit_only() {
+        let labels = gohan_labels();
+        let (sram, sidecar, mut keeper) = run_on_the_save(&labels);
+        let mut battle = wram_in(&[26, 2], 40, 0x02, 5);
+        keep(&mut keeper, &mut battle, &labels, &sram, &sidecar, false);
+        copy_in(&mut battle, &[2], 40);
+        keep(&mut keeper, &mut battle, &labels, &sram, &sidecar, false);
+        let bag = keeper.bag().unwrap();
+        assert_eq!((bag.units_of(26), bag.units_of(2)), (0, 2), "Gohan is called, the Bulmas stay");
+        // A Bulma used next: one unit of its stack.
+        copy_in(&mut battle, &[], 40);
+        keep(&mut keeper, &mut battle, &labels, &sram, &sidecar, false);
+        assert_eq!(keeper.bag().unwrap().units_of(2), 1, "one Bulma is used, the stack stays");
+        assert_eq!(keeper.bound_save().map(|(slot, _)| slot), Some(0), "the run keeps its save");
+        assert_eq!(read_list(&battle), [(2, 0)]);
+    }
+
+    #[test]
+    fn a_state_loaded_on_the_game_over_screen_keeps_the_states_bag() {
+        let labels = gohan_labels();
+        let (sram, sidecar, mut keeper) = run_on_the_save(&labels);
+        let bag = keeper.bag().cloned().unwrap();
+        let save = keeper.bound_save();
+        let mut over = wram_in(&[26, 2], 40, 0x0D, 5);
+        keep(&mut keeper, &mut over, &labels, &sram, &sidecar, false);
+        // A state of the map loaded over the Game Over screen: the state's bag is the run's.
+        let mut map = wram_in(&[26, 2], 40, 0x00, 0);
+        let events = keeper.restore(bag.clone(), save, &map, &labels);
+        apply(&mut map, &events);
+        keep(&mut keeper, &mut map, &labels, &sram, &sidecar, true);
+        assert_eq!(keeper.bag(), Some(&bag), "the state's bag stays bound");
+        assert_eq!(keeper.bound_save(), save);
     }
 }

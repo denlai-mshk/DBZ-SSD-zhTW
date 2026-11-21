@@ -137,9 +137,13 @@ VIAddVersionKey /LANG=1028 "LegalCopyright" "ssd-recompiled © JackRushante/DBZ-
 !else
   !define UPDATE_NOTE "之後出新版時，下載新版的安裝程式再裝一次即可，存檔與設定都會保留。"
 !endif
+; 第一段（$WelcomeLead）在 .onInit 依上次的安裝位置決定（PrevInstall）：那裡已經裝著本程式時說「偵測到已安裝的 RC2，
+; 這會原地升級為 RC3」，同一版說「在原位置重新安裝」，其餘照原本的「這會安裝 RC3」。執行時展開（MUI2 的歡迎頁用
+; nsDialogs 建文字，變數在執行時代入）
+Var WelcomeLead
 ; 第三段（ROM 與 HD 美術包）手動換行，每行最多 15 個全形字，Windows 不會在詞中間自動折行。「不下載也能玩，畫面是
 ; 原版像素」與啟動器的詢問文字一致（launcher/src/hd_offer.rs：不下載也能玩，畫面用原版像素）
-!define MUI_WELCOMEPAGE_TEXT "這會安裝 ${DISPLAY_VERSION}，下一步可以選擇要裝在哪個資料夾。$\r$\n$\r$\n只裝給目前的使用者，不需要系統管理員權限，並在開始功能表和桌面建立捷徑。$\r$\n$\r$\n安裝檔不含遊戲 ROM 和 HD 美術包。$\r$\n第一次開啟時請選你自己的 ROM。$\r$\n高畫質的畫面要靠 HD 美術包，$\r$\n可以選擇要不要下載；$\r$\n不下載也能玩，畫面是原版像素。$\r$\n$\r$\n${UPDATE_NOTE}"
+!define MUI_WELCOMEPAGE_TEXT "$WelcomeLead$\r$\n$\r$\n只裝給目前的使用者，不需要系統管理員權限，並在開始功能表和桌面建立捷徑。$\r$\n$\r$\n安裝檔不含遊戲 ROM 和 HD 美術包。$\r$\n第一次開啟時請選你自己的 ROM。$\r$\n高畫質的畫面要靠 HD 美術包，$\r$\n可以選擇要不要下載；$\r$\n不下載也能玩，畫面是原版像素。$\r$\n$\r$\n${UPDATE_NOTE}"
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW SkinPage
 !insertmacro MUI_PAGE_WELCOME
 
@@ -876,6 +880,28 @@ Function ClassifyInstDir
   Pop $0
 FunctionEnd
 
+; 這個位置上已經裝著的版本（ClassifyInstDir 之後 Call PrevInstall）：$PrevVer＝空字串（不是本程式已安裝的位置：空的、
+; 免安裝版、解除過只留下存檔的 state=removed、別人的）；「新增或移除程式」的項目指向這裡時是它的 DisplayVersion
+; （例如 RC1、RC2）；項目不在、指向別處或沒有版本時是「舊版」。只讀現有的標記檔與登錄，不另外記任何東西
+Var PrevVer
+Function PrevInstall
+  Push $0
+  StrCpy $PrevVer ""
+  ${If} $DirClass == "ours"
+  ${AndIf} $MkState == "installed"
+    StrCpy $PrevVer "舊版"
+    Call RegisteredHere
+    Pop $0
+    ${If} $0 == "1"
+      ReadRegStr $0 HKCU "${UNINSTALL_KEY}" "DisplayVersion"
+      ${If} $0 != ""
+        StrCpy $PrevVer $0
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+  Pop $0
+FunctionEnd
+
 ; 磁碟根目錄（C:\、D:\、\\伺服器\共用資料夾）與 Windows 資料夾（本身與底下，不分大小寫）
 Var CheckIsRoot   ; "1"：CheckInstDirRoot 擋下的是磁碟根目錄（不是 Windows 資料夾）
 Function CheckInstDirRoot
@@ -1213,6 +1239,21 @@ Function .onInit
   Call GetOpt
   Pop $IpsPath
 
+  ; 歡迎頁的第一段：上次的安裝位置（InstallDirRegKey 帶出的 $INSTDIR）已經裝著本程式時，說這是原地升級。
+  ; 只看不改：$INSTDIR 照原樣還回去（選位置頁顯示的值與結尾的 \ 都不變）
+  StrCpy $R6 $INSTDIR
+  Call TrimInstDir
+  Call ClassifyInstDir
+  Call PrevInstall
+  StrCpy $INSTDIR $R6
+  ${If} $PrevVer S== "${DISPLAY_VERSION}"
+    StrCpy $WelcomeLead "偵測到已安裝的 ${DISPLAY_VERSION}，這會在原位置重新安裝，存檔與 HD 美術包都會保留。"
+  ${ElseIf} $PrevVer != ""
+    StrCpy $WelcomeLead "偵測到已安裝的 $PrevVer，這會原地升級為 ${DISPLAY_VERSION}，存檔與 HD 美術包都會保留。"
+  ${Else}
+    StrCpy $WelcomeLead "這會安裝 ${DISPLAY_VERSION}，下一步可以選擇要裝在哪個資料夾。"
+  ${EndIf}
+
   ${If} ${Silent}
     ; NSIS 只採用可用的 /D=：空值、磁碟根目錄、是檔案、不是完整路徑時，它會默默換回預設位置照裝。
     ; 帶了 /D= 卻是空值，或不是 $INSTDIR 那個位置，就當成不能用的位置中止，不裝到沒指定的地方
@@ -1324,7 +1365,7 @@ Function DirLeave
     Pop $R7
     ${If} $R6 != "1"
     ${AndIf} $R7 == "dir"
-      ${IfNot} ${Cmd} `MessageBox MB_YESNO|MB_ICONINFORMATION "上次裝在：$\r$\n$R5$\r$\n$\r$\n存檔與 ROM 設定（那裡的 save 資料夾）會留在舊位置，不會自動搬到新位置。要沿用的話，可以改回舊位置安裝，或安裝後自己把整個 save 資料夾搬過來。$\r$\n$\r$\n仍要裝到新位置嗎？" IDYES`
+      ${IfNot} ${Cmd} `MessageBox MB_YESNO|MB_ICONINFORMATION "上次裝在：$\r$\n$R5$\r$\n$\r$\n存檔與 ROM 設定（那裡的 save 資料夾）會留在舊位置，不會自動搬到新位置。要沿用的話，可以改回舊位置安裝，或安裝後自己把整個 save 資料夾搬過來。$\r$\n$\r$\n舊位置的程式也不會被移除，只是「新增或移除程式」會改成指向新位置；不需要舊的那份時，可以執行舊位置裡的 ${UNINSTALLER} 移除它（存檔預設保留）。$\r$\n$\r$\n仍要裝到新位置嗎？" IDYES`
         Abort
       ${EndIf}
     ${EndIf}
@@ -1649,6 +1690,16 @@ Section "install"
   ${EndIf}
   ${If} $DirClass == "portable"
     Push "從免安裝版原地升級：$INSTDIR"
+    Call Log
+  ${EndIf}
+  ; 這裡已經裝著本程式：說是升級還是同一版重裝（寫標記檔與登錄之前讀，讀到的是原本那一份的）。安裝畫面的詳細資訊
+  ; 與紀錄都有這一行
+  Call PrevInstall
+  ${If} $PrevVer S== "${DISPLAY_VERSION}"
+    Push "偵測到已安裝的 ${DISPLAY_VERSION}，在原位置重新安裝：$INSTDIR（存檔與 HD 美術包保留）"
+    Call Log
+  ${ElseIf} $PrevVer != ""
+    Push "偵測到已安裝的 $PrevVer，原地升級為 ${DISPLAY_VERSION}：$INSTDIR（存檔與 HD 美術包保留）"
     Call Log
   ${EndIf}
   ; 第一個寫入動作：標記檔（state=installed）

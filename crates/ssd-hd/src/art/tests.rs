@@ -2,7 +2,7 @@
 //! frames with one tile or one sprite.
 
 use super::poses::{self, Pose};
-use super::{ArtState, Conditions};
+use super::{ArtSource, ArtState, Conditions};
 use crate::art_index::{ArtIndex, Object, Palette, Picture};
 use crate::pack::{Asset, Index, Manifest, Mode, Pack, PoseVariant, word_key};
 use crate::world::{HudPlacement, Rom, WideOptions, WideRenderer};
@@ -891,6 +891,166 @@ fn sprites_that_show_a_picture_are_never_drawn_from_a_pose_of_the_same_shape() {
     let drawn = renderer.render_hd(&frame, options(4)).unwrap();
     assert!(renderer.art_stats().poses[0].matched);
     assert_ne!(pixel(&drawn, 41 * 4 + 1, 59 * 4 + 1)[1], 200, "the pose's art, not the picture's");
+}
+
+/// The opening's portrait with speed lines beside it: the 16 x 16 sprite of [`banded_log`] at (40, 50) whose
+/// characters a portrait asset's picture covers, and left of it, touching it, an 8 x 8 sprite of the same palette
+/// (tile 2, colour 1) no picture has: two lines across it at rows `lines`. The lines move from frame to frame, so the
+/// sprites are one effect cluster with another key in each.
+fn portrait_with_lines(lines: [usize; 2]) -> (FrameLog, Pose) {
+    let (mut log, _) = banded_log(40, 50, [0x03FF, 0x7FE0, 0x7C1F]);
+    log.oam_low[4] = 32;
+    log.oam_low[5] = 54;
+    log.oam_low[6] = 2;
+    log.oam_low[7] = 4 << 1;
+    for row in lines {
+        log.vram[2 * 16 + row] = 0x00FF;
+    }
+    let sprites = poses::sprites(&log);
+    let poses: Vec<Pose> =
+        poses::poses(&log, &sprites).into_iter().filter(|pose| !pose.field).collect();
+    assert_eq!(poses.len(), 1, "the portrait and the lines are one cluster");
+    (log, poses.into_iter().next().unwrap())
+}
+
+/// The portrait asset whose picture covers the characters of the portrait sprite of [`portrait_with_lines`]
+/// (tiles 0, 1, 16 and 17), its art `art`.
+fn portrait_picture(frame: &FrameLog, art: &str) -> (Asset, Picture) {
+    let chars: Vec<[u16; 16]> = [0_usize, 1, 16, 17]
+        .iter()
+        .map(|&tile| std::array::from_fn(|word| frame.vram[tile * 16 + word]))
+        .collect();
+    let asset = Asset {
+        id: "portrait/16:8000/4bpp".to_owned(),
+        bpp: 4,
+        mode: Mode::Indexed,
+        columns: 16,
+        keys: chars.iter().map(|c| word_key(c)).collect(),
+        art: String::new(),
+    };
+    let picture = Picture {
+        name: "face".to_owned(),
+        asset: asset.id.clone(),
+        tiles: std::array::from_fn(|n| n as u16),
+        palette: Palette::default(),
+        art: art.to_owned(),
+    };
+    (asset, picture)
+}
+
+/// The 4x pixels of the portrait sprite's box of [`portrait_with_lines`] (x 40 to 55, y 50 to 66).
+fn portrait_box(drawn: &crate::HdFrame) -> Vec<[u8; 3]> {
+    (50 * 4..67 * 4).flat_map(|y| (40 * 4..56 * 4).map(move |x| pixel(drawn, x, y))).collect()
+}
+
+#[test]
+fn a_portrait_in_a_cluster_with_other_sprites_is_drawn_from_its_picture_whatever_the_art() {
+    // The art made for the cluster in each of two frames: the speed lines, and a face of its own over the
+    // portrait's sprites, red in one and blue in the other (the opening's four `fgfx-*` of Goku's portrait and his
+    // speed lines, a Goku of their own each)
+    let dir = tempfile::tempdir().unwrap();
+    // (the picture's art a gradient, so that every pixel of it is told apart)
+    write_png(&dir.path().join("art/p.png"), 128, 128, |x, y| [x as u8, y as u8, 100, 255]);
+    let (one, pose_one) = portrait_with_lines([3, 4]);
+    let (two, pose_two) = portrait_with_lines([2, 5]);
+    assert_ne!(pose_one.key, pose_two.key, "the lines make another cluster");
+    // (the art covers the cluster's opaque pixels, as the pack's does)
+    let cluster = |pose: &Pose, name: &str, colour: [u8; 4]| {
+        let art = format!("art/{name}.png");
+        let opaque = |x: u32, y: u32| pose.arr[(y / 4) as usize * pose.w + (x / 4) as usize] != 0;
+        write_png(&dir.path().join(&art), pose.w as u32 * 4, pose.h as u32 * 4, |x, y| {
+            if opaque(x, y) { colour } else { [0, 0, 0, 0] }
+        });
+        Object { id: format!("fgfx-{name}"), ..object(pose, &art, false) }
+    };
+    let (red, blue) = ([200, 40, 40], [40, 40, 200]);
+    let objects = vec![
+        cluster(&pose_one, "one", [red[0], red[1], red[2], 255]),
+        cluster(&pose_two, "two", [blue[0], blue[1], blue[2], 255]),
+    ];
+    let (asset, picture) = portrait_picture(&one, "art/p.png");
+    let pack = pack_of(dir.path(), vec![asset], ArtIndex::new(vec![picture], objects));
+    let mut renderer = Renderer::new();
+    renderer.set_art(Some(pack));
+    let first = renderer.render_hd(&one, options(4)).unwrap();
+    assert!(renderer.art_stats().poses[0].matched, "the cluster is drawn from its art");
+    let second = renderer.render_hd(&two, options(4)).unwrap();
+    assert!(renderer.art_stats().poses[0].matched);
+
+    // The portrait's box is the same in both frames, and on every opaque pixel of the portrait's sprite it is what
+    // the picture's art alone draws (the frame drawn with a pack of the picture only)
+    let (box_one, box_two) = (portrait_box(&first), portrait_box(&second));
+    assert!(box_one == box_two, "the portrait does not change with the lines");
+    let (asset, picture) = portrait_picture(&one, "art/p.png");
+    let only_picture = pack_of(dir.path(), vec![asset], ArtIndex::new(vec![picture], Vec::new()));
+    let mut reference = Renderer::new();
+    reference.set_art(Some(only_picture));
+    let mut plain = Renderer::new();
+    for (frame, drawn) in [(&one, &box_one), (&two, &box_two)] {
+        let expected = portrait_box(&reference.render_hd(frame, options(4)).unwrap());
+        // (the game's sprite at 1x on a black backdrop: its opaque pixels are the ones not black)
+        let sprite = plain.render_hd(frame, options(1)).unwrap();
+        let opaque: Vec<usize> = (0..expected.len())
+            .filter(|&n| pixel(&sprite, 40 + n % 64 / 4, 50 + n / 64 / 4) != [0, 0, 0])
+            .collect();
+        assert_eq!(opaque.len(), 239 * 16, "16 x 15 pixels but the first, at 4x");
+        let wrong = opaque.iter().filter(|&&n| drawn[n] != expected[n]).count();
+        assert_eq!(wrong, 0, "pixels of the portrait not the picture's art alone");
+    }
+    // The lines left of it are the cluster's art of each frame
+    let line = |drawn: &crate::HdFrame| {
+        (54 * 4..63 * 4).map(|y| pixel(drawn, 33 * 4 + 1, y)).find(|&p| p == red || p == blue)
+    };
+    assert_eq!((line(&first), line(&second)), (Some(red), Some(blue)));
+}
+
+#[test]
+fn a_cluster_of_only_a_portraits_sprites_is_drawn_from_the_art_made_for_it() {
+    // The field's own art for a whole portrait (the `field-fg-*` faces): the cluster's art, not the picture's
+    let dir = tempfile::tempdir().unwrap();
+    write_png(&dir.path().join("art/p.png"), 128, 128, |_, _| [20, 200, 20, 255]);
+    write_png(&dir.path().join("art/b.png"), 64, 60, |_, _| [200, 40, 40, 255]);
+    let (frame, pose) = banded_log(40, 50, [0x03FF, 0x7FE0, 0x7C1F]);
+    let (asset, picture) = portrait_picture(&frame, "art/p.png");
+    let own = Object { id: "fgfx-face".to_owned(), ..object(&pose, "art/b.png", false) };
+    let pack = pack_of(dir.path(), vec![asset], ArtIndex::new(vec![picture], vec![own]));
+    let mut renderer = Renderer::new();
+    renderer.set_art(Some(pack));
+    let drawn = renderer.render_hd(&frame, options(4)).unwrap();
+    assert!(renderer.art_stats().poses[0].matched);
+    assert_eq!(pixel(&drawn, 41 * 4 + 1, 59 * 4 + 1), [200, 40, 40], "the cluster's own art");
+}
+
+#[test]
+fn only_a_cluster_drawn_from_the_art_of_its_exact_pixels_has_its_portrait_drawn_again() {
+    // The portrait and its lines placed from the art made for their exact pixels: their sprites are drawn again
+    // from the picture. The same cluster drawn from art found by its shape, or holding it, is not
+    let dir = tempfile::tempdir().unwrap();
+    write_png(&dir.path().join("art/p.png"), 128, 128, |_, _| [20, 200, 20, 255]);
+    let (frame, pose) = portrait_with_lines([3, 4]);
+    write_png(&dir.path().join("art/c.png"), pose.w as u32 * 4, pose.h as u32 * 4, |_, _| {
+        [200, 40, 40, 255]
+    });
+    let (asset, picture) = portrait_picture(&frame, "art/p.png");
+    let cluster = Object { id: "fgfx-lines".to_owned(), ..object(&pose, "art/c.png", false) };
+    let pack = pack_of(dir.path(), vec![asset], ArtIndex::new(vec![picture], vec![cluster]));
+    // (the frame drawn once: the art's record of its pixels says which show the picture)
+    let mut renderer = Renderer::new();
+    renderer.set_art(Some(pack));
+    renderer.render_hd(&frame, options(4)).unwrap();
+    let art = renderer.art.as_mut().unwrap();
+    let found = art.find_poses(&frame);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].0.source, ArtSource::Exact);
+    assert_eq!(art.portraits_among_others(&found), 0b11, "the portrait's sprite and the lines'");
+    let drawn_from = |source: ArtSource| {
+        let mut found = found.clone();
+        found[0].0.source = source;
+        art.portraits_among_others(&found)
+    };
+    assert_eq!(drawn_from(ArtSource::Mirror), 0b11, "the art of the exact pixels mirrored");
+    assert_eq!(drawn_from(ArtSource::Shaped), 0, "art found by its shape");
+    assert_eq!(drawn_from(ArtSource::Held), 0, "art holding the cluster");
 }
 
 /// A field character of palette 4 (so a "field" group, and an effect by its colours too): a
@@ -2336,6 +2496,39 @@ fn the_kaioken_condition_is_the_bit_of_the_state_and_goku_in_a_party_record() {
             ssj_lightning: None
         },
         "the Kaioken's multiplier in use (its first close-up, before $0C36 says it is on)"
+    );
+}
+
+/// The multiplier (`$01EF`) is cleared only when the next turn starts (`05:83D8`), so it outlives the Kaioken: Goku turning
+/// Super Saiyan in the turn he used it (Krillin falls to Frieza) has `$0C36` cleared by the trigger (`05:87B1`) and the
+/// multiplier left. In the transformation (battle phase `$1A`, the unit still `$3A`) and after it (`$3B` in the party) it
+/// is not the normal Goku using the Kaioken: his close-up and his powering up were drawn from the game's sprites in the
+/// frames whose palette is not the Super Saiyan's.
+#[test]
+fn the_multiplier_left_by_the_kaioken_is_not_the_kaioken_while_goku_turns_super_saiyan() {
+    let mut wram = vec![0_u8; 0x20000];
+    wram[0x01EF] = 0x14;
+    wram[0x00AB] = 0x04;
+    wram[0x0B01] = 0x3A;
+    assert!(
+        Conditions::of_work_ram(&wram).kaioken_on,
+        "the Kaioken's first close-up: the multiplier, $0C36 clear, the attack's animation (phase 4)"
+    );
+    wram[0x00AB] = 0x1A;
+    assert!(
+        !Conditions::of_work_ram(&wram).kaioken_on,
+        "the transformation (phase $1A), the unit still $3A"
+    );
+    wram[0x00AB] = 0x01;
+    wram[0x0B01] = 0x3B;
+    assert!(
+        !Conditions::of_work_ram(&wram).kaioken_on,
+        "after it: $3B in the party, the multiplier not cleared before the next turn"
+    );
+    wram[0x0C36] = 0x80;
+    assert!(
+        Conditions::of_work_ram(&wram).kaioken_on,
+        "the Kaioken's own bit still says it is on (a pack's Super Saiyan Kaioken)"
     );
 }
 

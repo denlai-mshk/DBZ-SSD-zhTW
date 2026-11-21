@@ -558,6 +558,7 @@ mod tests {
 
     #[test]
     fn before_a_choice_android_words_are_taiwan_when_both_are_there() {
+        let _guard = LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let taiwan = Language::from_code("zh-tw").unwrap();
         let offered = [Locale::unnamed(Language::ZH_HK), Locale::unnamed(taiwan)];
         assert_eq!(interface_in(None, None, &offered), taiwan, "the page's first button");
@@ -577,6 +578,7 @@ mod tests {
 
     #[test]
     fn before_a_choice_the_desktop_too_takes_the_first_of_the_page_and_english_without_one() {
+        let _guard = LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let taiwan = Language::from_code("zh-tw").unwrap();
         let xx = Language::from_code("xx").unwrap();
         let offered = [Locale::unnamed(Language::ZH_HK), Locale::unnamed(taiwan)];

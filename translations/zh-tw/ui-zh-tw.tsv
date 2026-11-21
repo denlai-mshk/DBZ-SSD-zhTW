@@ -76,7 +76,7 @@ This file is too big to be a data pack.	這個檔案太大，不可能是資料�
 PLA.	速度
 KI-USE	ＫＩ消耗
 
-# 643 rows are first-pass translations and may be revised.
+# 668 rows are first-pass translations and may be revised.
 Talk to the person ahead.	和前面的人交談。
 Search the ground nearby.	調查附近的地面。
 Take off and fly the map.	起飛，在地圖上飛行。
@@ -721,3 +721,28 @@ Object {}	卡牌 {}
 {}, {}, {} ({} x {}), Scanlines {}	{}，{}，{}（{} x {}），掃描線：{}
 {}, {}, {} ({} x {}), CRT {}	{}，{}，{}（{} x {}），CRT 濾鏡：{}
 {}, {}, {} ({} x {})	{}，{}，{}（{} x {}）
+The game could not start	遊戲無法啟動
+The game stopped with an error	遊戲發生錯誤
+The game could not start. The details are below.	遊戲無法啟動，詳細資訊如下。
+The game stopped because of an error. The details are below.	遊戲因錯誤而停止，詳細資訊如下。
+Version:	版本：
+Device:	裝置：
+Android:	Android：
+Chip:	晶片：
+Graphics:	GPU：
+Memory:	記憶體：
+Free memory:	可用記憶體：
+Not known	不明
+What went wrong:	錯誤內容：
+This text is on the clipboard. Please paste it into a report at:	以上內容已複製到剪貼簿，回報時請貼到：
+The last start failed	上次啟動失敗
+The last start stopped before its first picture, at:	上次啟動在畫出第一個畫面之前停在：
+This start uses OpenGL ES instead of Vulkan, and so will the next ones.	這次改用 OpenGL ES（不用 Vulkan）啟動，之後也會沿用。
+It was on OpenGL ES, after Vulkan had failed: neither could start the game on this device. This start tries OpenGL ES again.	上次已經改用 OpenGL ES（先前 Vulkan 也失敗）：這台裝置上兩種繪圖方式都無法啟動遊戲。這次仍以 OpenGL ES 再試一次。
+The last start's graphics backend was set by the arguments file, so nothing is changed.	上次的繪圖方式由參數檔指定，所以不會自動更改。
+the setup screens	設定畫面
+loading the game	載入遊戲
+opening the game's window and graphics	開啟遊戲畫面與繪圖
+opening the sound	開啟音效
+drawing the first picture	畫出第一個畫面
+an unknown step	不明的步驟

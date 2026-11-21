@@ -556,8 +556,16 @@ pub(crate) struct PlaneFrame {
 /// The work RAM bytes the conditions of a pack's pose variants are read from (`docs/re/data/kaioken-bp.md`, section 4).
 const KAIOKEN_STATE: usize = 0x0C36;
 /// The Kaioken's multiplier in use (`$01EF`, 0 = none; `docs/re/data/kaioken-bp.md`, section 4): written when the move is
-/// set up, before `$0C36` says the Kaioken is on, so the close-up of its first use ("悟空的 N倍界王拳！") has it.
+/// set up, before `$0C36` says the Kaioken is on, so the close-up of its first use ("悟空的 N倍界王拳！") has it. It is not
+/// cleared when the Kaioken ends: only the start of the next turn clears it (`05:83D8`, the one `STZ $01EF` of the ROM,
+/// with `$0C36` clear), so a multiplier alone is not the Kaioken on (see [`Conditions::of_work_ram`]).
 const KAIOKEN_MULTIPLIER: usize = 0x01EF;
+/// `battle_phase` (`$AB`) and the phase of Goku's Super Saiyan transformation (`$1A`): the trigger (`05:8772..87B3`, the
+/// one place of the ROM that writes `$1A` there, `05:87B1`) clears `$0C36`, `$0C37` and `$01EE` but not
+/// [`KAIOKEN_MULTIPLIER`]. (The app's watch of the transformation, `ssd-app`'s `voice.rs`, reads the same byte and value
+/// with constants of its own: that crate is not changed for this one.)
+const BATTLE_PHASE: usize = 0x00AB;
+const SUPER_SAIYAN_PHASE: u8 = 0x1A;
 /// The party records: nine of them from `$0B00`, `$20` bytes each, the unit in the second byte.
 const PARTY_RECORDS: usize = 0x0B00;
 const RECORD_STRIDE: usize = 0x20;
@@ -633,7 +641,9 @@ pub struct Conditions {
     kaioken: bool,
     super_saiyan_goku: bool,
     /// The Kaioken is on (`$0C36` bit 7) or its multiplier is in use (`$01EF`), whatever the party: the normal Goku using
-    /// it (see [`ArtState::recolourable`], patch 0050).
+    /// it (see [`ArtState::recolourable`], patch 0050). The multiplier is left after the Kaioken ends, so it counts only
+    /// outside Goku's Super Saiyan transformation and while no party record is Super Saiyan Goku (see
+    /// [`Conditions::of_work_ram`]).
     kaioken_on: bool,
     /// The ending's flight with Gohan: game mode `$11` and Goku drawn from the flight's sprites, not crouching before
     /// Vegeta (see [`ENDING_FRAMES`]).
@@ -648,13 +658,24 @@ impl Conditions {
     /// record has Super Saiyan Goku's unit (`$3B`), and the ending's flight is on screen: game mode `$11`, and not the frame
     /// of its loop ([`ENDING_FRAMES`]) from which Goku crouches before Vegeta with Vegeta in the ending's party. A `wram`
     /// too short to hold the bytes says no.
+    ///
+    /// The normal Goku uses the Kaioken while `$0C36` bit 7 is set, or while its multiplier ([`KAIOKEN_MULTIPLIER`]) is in
+    /// use: the close-up of its first use comes before the bit. The multiplier outlives the Kaioken until the next turn,
+    /// and Goku turns Super Saiyan in the turn he used it when a friend falls to Frieza then: the trigger ends the
+    /// Kaioken (`$0C36` cleared, as the original's state says) and leaves the multiplier. So the multiplier is not the
+    /// Kaioken in the transformation ([`SUPER_SAIYAN_PHASE`], his unit still `$3A`) nor once `$3B` is in the party:
+    /// counted there, the frames of the transformation whose palette flashes the Kaioken's red (the original's own
+    /// flashing) refused the Super Saiyan art of his close-up and of his powering up, and the game's sprites were drawn
+    /// between the pictures.
     #[must_use]
     pub fn of_work_ram(wram: &[u8]) -> Self {
         let on = wram.get(KAIOKEN_STATE).is_some_and(|byte| byte & 0x80 != 0);
-        let multiplier = wram.get(KAIOKEN_MULTIPLIER).is_some_and(|&byte| byte != 0);
         let goku = (0..PARTY_SLOTS).any(|slot| {
             wram.get(PARTY_RECORDS + RECORD_STRIDE * slot + 1) == Some(&SUPER_SAIYAN_GOKU)
         });
+        let transforming = wram.get(BATTLE_PHASE) == Some(&SUPER_SAIYAN_PHASE);
+        let multiplier =
+            !transforming && !goku && wram.get(KAIOKEN_MULTIPLIER).is_some_and(|&byte| byte != 0);
         let ending = wram.get(GAME_MODE).is_some_and(|&mode| mode & 0x7F == ENDING_MODE);
         let crouching = match (wram.get(ENDING_FRAMES..ENDING_FRAMES + 2), wram.get(ENDING_PARTY)) {
             (Some(&[low, high]), Some(&party)) => {
@@ -1438,7 +1459,7 @@ impl ArtState {
         self.prefetch(&std::collections::BTreeSet::new(), &wanted);
         let mut matches: Vec<(Pose, u32)> = Vec::new();
         for (n, slot) in placed.into_iter().enumerate() {
-            if let Some((pose, at)) = slot {
+            if let Some((mut pose, at)) = slot {
                 if at != SHADOW {
                     // (a pose whose art or pose variant is still being read is drawn as the game draws it)
                     // (both asked for in the same frame)
@@ -1453,6 +1474,7 @@ impl ArtState {
                 if at != SHADOW {
                     stats[n].source = sources[n];
                     stats[n].art = Some(real(at) as u32);
+                    pose.source = sources[n];
                 }
                 matches.push((pose, at));
             }
@@ -1573,6 +1595,31 @@ impl ArtState {
         self.cost.art_compose += started.elapsed();
     }
 
+    /// The sprites of the poses of `found` drawn from the art made for their exact pixels (or for them mirrored) that
+    /// mostly show a picture but not only: a portrait the art of a cluster holds with other sprites (see
+    /// `compose_art`), as a mask of OAM entries. A pose drawn from art found by its shape or holding it is not one.
+    fn portraits_among_others(&self, found: &[(Pose, u32)]) -> u128 {
+        let (mut shown, mut pictured) = ([0_u32; 128], [0_u32; 128]);
+        for pixel in self.pixels.iter().filter(|p| p.oam != crate::NO_OBJECT) {
+            let at = usize::from(pixel.oam) & 127;
+            shown[at] += 1;
+            pictured[at] += u32::from(pixel.picture != NO_PICTURE);
+        }
+        let mut portraits = 0_u128;
+        let exact = |pose: &Pose| matches!(pose.source, ArtSource::Exact | ArtSource::Mirror);
+        for (pose, _) in found.iter().filter(|(pose, at)| *at != SHADOW && exact(pose)) {
+            let sprites = pose.sprites & !pose.excluded;
+            let sum = |counts: &[u32; 128]| {
+                (0..128).filter(|&at| sprites >> at & 1 != 0).map(|at| counts[at]).sum::<u32>()
+            };
+            let (all, own) = (sum(&shown), sum(&pictured));
+            if own > 0 && own * 2 >= all && own < all {
+                portraits |= sprites;
+            }
+        }
+        portraits
+    }
+
     fn compose_art(
         &mut self,
         hd: &mut crate::HdFrame,
@@ -1670,6 +1717,22 @@ impl ArtState {
             measure,
             open,
         );
+        // A portrait the art of a cluster holds with other sprites (the opening's Goku with the speed lines beside him:
+        // the art made for each frame of the lines has a Goku of its own, four different ones) is drawn from its
+        // picture again over that art, the other sprites from the cluster's: the portrait is the same in every frame.
+        // A cluster of only a portrait's sprites keeps the art made for it (the field's faces)
+        let portraits = if wanted.is_empty() { 0 } else { self.portraits_among_others(found) };
+        if portraits != 0 {
+            let only: Vec<ArtPixel> = self
+                .pixels
+                .iter()
+                .map(|p| {
+                    let held = p.oam != crate::NO_OBJECT && portraits >> (p.oam & 127) & 1 != 0;
+                    if held { *p } else { ArtPixel { picture: NO_PICTURE, ..*p } }
+                })
+                .collect();
+            draw_pictures(&mut hd.rgba, scale, self.width, &only, &images);
+        }
         if !replaced.is_empty() {
             self.in_front.resize(frame.width * frame.height, false);
         }

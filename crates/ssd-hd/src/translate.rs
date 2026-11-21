@@ -156,12 +156,17 @@ pub struct Overlay {
     /// The names the game writes straight into its tile maps, as the screen spells them, and their translations
     /// (`ssd_catalogue::engine::screen_names`).
     names: HashMap<String, String>,
+    /// The names with blanks inside, the only ones a word can fill ([`fills`]), and all the names in their order, so
+    /// the names a word is the start of are one run of them: found by a binary search, not a search of every name
+    /// for each part of the screen (a screen of the font's tiles while the Continue loads has thousands of parts).
+    filling: Vec<(String, String)>,
+    sorted: Vec<(String, String)>,
 }
 
 impl Overlay {
     #[must_use]
     pub fn new(table: Arc<Translation>, face: Arc<ChineseFace>) -> Self {
-        Self { table, face, names: HashMap::new() }
+        Self { table, face, names: HashMap::new(), filling: Vec::new(), sorted: Vec::new() }
     }
 
     /// The translation of the name `english` spells on screen: the name, or the one name it is the start of
@@ -174,7 +179,7 @@ impl Overlay {
             return Some(name);
         }
         // A name with blanks inside that the game writes letters into (the Stats page's `EX    UP.`, its `LV` in them)
-        let mut filled = self.names.iter().filter(|(name, _)| fills(name, english));
+        let mut filled = self.filling.iter().filter(|(name, _)| fills(name, english));
         if let Some((_, first)) = filled.next() {
             return filled.all(|(_, other)| other == first).then_some(first.as_str());
         }
@@ -185,8 +190,11 @@ impl Overlay {
             let rest = &name[english.len()..];
             !(rest.starts_with(' ') && rest.trim_start().starts_with(|ch: char| ch.is_lowercase()))
         };
-        let mut starting =
-            self.names.iter().filter(|(name, _)| name.starts_with(english) && cut(name));
+        let from = self.sorted.partition_point(|(name, _)| name.as_str() < english);
+        let mut starting = self.sorted[from..]
+            .iter()
+            .take_while(|(name, _)| name.starts_with(english))
+            .filter(|(name, _)| cut(name));
         let (_, first) = starting.next()?;
         starting.all(|(_, other)| other == first).then_some(first.as_str())
     }
@@ -194,6 +202,14 @@ impl Overlay {
     /// The overlay drawing the translations of `names` over the runs of letters that spell them.
     #[must_use]
     pub fn with_names(mut self, names: HashMap<String, String>) -> Self {
+        self.filling = names
+            .iter()
+            .filter(|(name, _)| name.trim().contains("  "))
+            .map(|(name, translation)| (name.clone(), translation.clone()))
+            .collect();
+        self.sorted =
+            names.iter().map(|(name, translation)| (name.clone(), translation.clone())).collect();
+        self.sorted.sort_unstable();
         self.names = names;
         self
     }
@@ -273,6 +289,9 @@ struct Shown {
     /// the ending's). It is placed by its window's blank ground and typed as the Japanese ROM types it ([`draw`],
     /// [`blank_ground`]).
     blank: bool,
+    /// What the engine writes in each cell of each line of the page ([`OnScreen::english`]): whether a cell with no
+    /// text tile a blank cell before a choice is the cursor or a mark of the English ([`draw`]).
+    english: Vec<Vec<Option<char>>>,
 }
 
 /// What the overlay keeps from one frame to the next.
@@ -2732,6 +2751,7 @@ pub(crate) fn draw(
                         .zip(&screen.english)
                         .all(|(&cells, line)| cells == line.len())
                     && screen.english.iter().flatten().all(|cell| cell.is_none_or(|ch| ch == ' ')),
+                english: screen.english.clone(),
             });
             if kept.shown.as_ref().map(|shown| &shown.key)
                 != before.as_ref().map(|shown| &shown.key)
@@ -3165,6 +3185,34 @@ pub(crate) fn draw(
             !tiled.contains(&(x, y)) && (battle_choice || blanks.contains(&(x - 8, y)))
         })
         .collect();
+    // The game may draw the cursor a blank cell before its choice's first letter (the training ground's `str3:0x27`,
+    // `03:A3F3`: `▶` in column 14, `Fight` and `Raise KI` from column 16; the `NO` of `str3:0x09`, a cell right of
+    // its `YES`, under the cursor of `01:D54C`): a cell with no text tile, a blank cell left of it and one right of
+    // it, then a letter, where the page's English has a space (the line's, before its letter), is the cursor too. One
+    // blank cell at most. A mark of the English the font has no glyph for there (`…`, `None`) is no cursor, nor is
+    // a cell of a page whose English cells are not known (the intro's, the ending's)
+    let spaced = |(x, y): (i32, i32)| {
+        // (every line's English from the text's first cell, a portrait's first line too:
+        // `every_line_of_a_portraits_page_starts_at_the_text_base`)
+        let (row, column) = ((y - y0) / pitch, (x - x0).div_euclid(8));
+        if y < y0 || (y - y0) % pitch != 0 || column < 0 {
+            return false;
+        }
+        shown.english.get(row as usize).and_then(|line| line.get(column as usize))
+            == Some(&Some(' '))
+    };
+    cursors.extend(
+        letters
+            .iter()
+            .filter(|_| centring.is_none() && !shown.blank)
+            .map(|cell| (cell.x - 16, cell.y))
+            .filter(|&(x, y)| {
+                !tiled.contains(&(x, y))
+                    && blanks.contains(&(x - 8, y))
+                    && blanks.contains(&(x + 8, y))
+                    && spaced((x, y))
+            }),
+    );
     // A page with no letter has none for a cursor to come before: a cell of its paper with no text tile, a blank cell
     // left of it, that is not a cell of its English lines (the `…` of `str3:0x5D`) nor the cell after one (its `▼`),
     // is the cursor of the choice after it (`str3:0x5D`'s `▶` before 是 / 否, as the game shows it with no word)
@@ -5898,14 +5946,44 @@ mod tests {
             .collect();
         let names = [("Atk.", "戰鬥"), ("Item", "卡牌"), ("Menu", "選單")]
             .map(|(english, name)| (english.to_owned(), name.to_owned()));
-        let overlay = overlay().with_names(names.into_iter().collect());
+        // As many names as the shipped translations have (`screen_names`: 176, 4 of them with blanks inside): a part
+        // that is no name was looked up by a search of every name, 254 ms for this screen (Mac, the test profile;
+        // the game's screen took 188 to 232 ms a frame), 23 ms with the indexes
+        let filler = (0..173).map(|n| {
+            let english = if n < 4 { format!("EX{n}    UP.") } else { format!("Name {n:03}") };
+            (english, format!("名{n}"))
+        });
+        let overlay = overlay().with_names(names.into_iter().chain(filler).collect());
+        assert_eq!(overlay.names.len(), 176);
         let mut rgba = [7_u8, 7, 7, 255].repeat(512 * 512);
         let mut target = Target { rgba: &mut rgba, width: 512, scale: 1 };
         let start = std::time::Instant::now();
         draw_names(&overlay, &mut target, &cells, &[], 0, &character);
         draw_rules(&mut target, &cells, &character);
         let took = start.elapsed();
-        assert!(took < std::time::Duration::from_millis(200), "{took:?}");
+        // (a bound far above either, for a screen that would take seconds)
+        assert!(took < std::time::Duration::from_millis(1000), "{took:?}");
+        // The lookups of the screen's parts by the indexes and by a search of every name (`name_by_search`, the
+        // lookup before the indexes), timed in the same run so that the machine's speed does not count: the fastest
+        // of five rounds each. Measured 46 to 51 times faster (Mac, the test profile, five runs); the bound of 10
+        // leaves room for a busy machine, and a search of every name (1 time) fails it
+        let words: Vec<String> = name_parts(&cells, &character)
+            .into_iter()
+            .map(|(english, _)| english.trim_end().to_owned())
+            .collect();
+        let timed = |lookup: &dyn Fn(&str) -> bool| {
+            let start = std::time::Instant::now();
+            for word in &words {
+                std::hint::black_box(lookup(std::hint::black_box(word)));
+            }
+            start.elapsed()
+        };
+        let (mut indexed, mut searched) = (std::time::Duration::MAX, std::time::Duration::MAX);
+        for _ in 0..5 {
+            indexed = indexed.min(timed(&|word| overlay.name(word).is_some()));
+            searched = searched.min(timed(&|word| name_by_search(&overlay.names, word).is_some()));
+        }
+        assert!(searched > indexed * 10, "indexed {indexed:?}, searched {searched:?}");
     }
 
     #[test]
@@ -6152,6 +6230,129 @@ mod tests {
         assert_eq!(overlay.name("Piccol"), Some("比克"));
         assert_eq!(overlay.name("Galick"), Some("魔閃光"), "a word of a name's own");
         assert_eq!(overlay.name("Zeni"), Some("金錢　　Ｐ"), "the money window's word");
+    }
+
+    /// What `Overlay::name` found before its indexes, by a search of every name for each word (v45): the lookup the
+    /// indexes must find the same as.
+    fn name_by_search<'a>(names: &'a HashMap<String, String>, english: &str) -> Option<&'a str> {
+        if let Some(name) = names.get(english) {
+            return Some(name);
+        }
+        let mut filled = names.iter().filter(|(name, _)| fills(name, english));
+        if let Some((_, first)) = filled.next() {
+            return filled.all(|(_, other)| other == first).then_some(first.as_str());
+        }
+        if english.chars().count() < 4 {
+            return None;
+        }
+        let cut = |name: &str| {
+            let rest = &name[english.len()..];
+            !(rest.starts_with(' ') && rest.trim_start().starts_with(|ch: char| ch.is_lowercase()))
+        };
+        let mut starting = names.iter().filter(|(name, _)| name.starts_with(english) && cut(name));
+        let (_, first) = starting.next()?;
+        starting.all(|(_, other)| other == first).then_some(first.as_str())
+    }
+
+    /// The words to look `names` up with: each name, every start of it, the name with letters and with figures in its
+    /// blanks, the name with a lower-case word or a letter after it, and a few words no name has.
+    fn words_for(names: &HashMap<String, String>) -> Vec<String> {
+        let mut words: Vec<String> =
+            ["", "a", "a,", "Go", "Zzzz", "Item", "Attack", "LV", "EX", "  "]
+                .map(str::to_owned)
+                .to_vec();
+        for name in names.keys() {
+            words.extend(name.char_indices().skip(1).map(|(at, _)| name[..at].to_owned()));
+            words.push(name.clone());
+            words.push(format!("{name} with"));
+            words.push(format!("{name}X"));
+            words.push(name.trim_end().to_owned());
+            words.push(name.to_lowercase());
+            let inner = name.trim();
+            if inner.contains("  ") {
+                let (lead, trail) = (name.len() - name.trim_start().len(), name.trim_end().len());
+                let blanks_with = |letter: char| -> String {
+                    name.char_indices()
+                        .map(
+                            |(at, ch)| {
+                                if ch == ' ' && at > lead && at < trail { letter } else { ch }
+                            },
+                        )
+                        .collect()
+                };
+                words.push(blanks_with('L'));
+                words.push(blanks_with('7'));
+                words.push(blanks_with('.'));
+            }
+        }
+        words.sort();
+        words.dedup();
+        words
+    }
+
+    #[test]
+    fn the_name_indexes_find_what_a_search_of_every_name_finds() {
+        // Names that fill (blanks inside, letters written into them), names that start others with one translation
+        // and with two, a name cut before a lower-case word, and names whose start is another whole name
+        let names = [
+            ("EX    UP.", "經驗值"),
+            ("EX    UP!", "經驗值"),
+            ("LV  /  ", "等級"),
+            ("Zeni     P", "金錢　　Ｐ"),
+            ("Attack without", "參加戰鬥的人數"),
+            ("Attack", "攻擊"),
+            ("Piccolo", "比克"),
+            ("Piccolo Jr.", "比克"),
+            ("Gohan", "孫悟飯"),
+            ("Gohan's dad", "悟空"),
+            ("Galick Ho", "魔閃光"),
+            ("Galick Gun", "魔閃光砲"),
+            ("Kamehameha", "龜派氣功"),
+            ("Kame", "龜"),
+            ("Kame House", "龜仙屋"),
+        ]
+        .map(|(english, name)| (english.to_owned(), name.to_owned()));
+        let names: HashMap<String, String> = names.into_iter().collect();
+        let overlay = overlay().with_names(names.clone());
+        let words = words_for(&names);
+        assert!(words.len() > 150, "{} words", words.len());
+        for word in &words {
+            assert_eq!(overlay.name(word), name_by_search(&names, word), "`{word}`");
+        }
+        // (the words reach every branch: a whole name, a filled one, one start, a start of two)
+        assert_eq!(overlay.name("EXLV  UP."), Some("經驗值"));
+        assert_eq!(overlay.name("Picc"), Some("比克"));
+        assert_eq!(overlay.name("Gali"), None);
+        assert_eq!(overlay.name("Attack"), Some("攻擊"));
+    }
+
+    /// The overlay's names of each translation as the game's ROM spells them (`screen_names` of the translation
+    /// shipped in `translations/`, as the app builds them): found by the indexes as by a search of every name, for
+    /// the starts, fillings and misses of every name. Needs `SSD_ROM_PATH`; run with
+    /// `cargo test -p ssd-hd -- --ignored the_name_indexes`.
+    #[test]
+    #[ignore = "needs SSD_ROM_PATH"]
+    fn the_name_indexes_find_what_a_search_of_every_name_finds_in_the_shipped_translations() {
+        let bytes = std::fs::read(std::env::var("SSD_ROM_PATH").expect("SSD_ROM_PATH")).unwrap();
+        let rom = ssd_rom::normalize(&bytes, None).unwrap().bytes;
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../translations");
+        for code in ["zh-tw", "zh-hk"] {
+            let table = Translation::read(&root.join(code).join(format!("{code}.tsv"))).unwrap();
+            let names = ssd_catalogue::engine::screen_names(&rom, &table);
+            let filling = names.keys().filter(|name| name.trim().contains("  ")).count();
+            assert!(names.len() > 150, "{code}: {} names", names.len());
+            let overlay = overlay().with_names(names.clone());
+            let words = words_for(&names);
+            let found = words.iter().filter(|word| name_by_search(&names, word).is_some()).count();
+            eprintln!(
+                "{code}: {} names ({filling} with blanks inside), {} words, {found} of them found",
+                names.len(),
+                words.len()
+            );
+            for word in &words {
+                assert_eq!(overlay.name(word), name_by_search(&names, word), "{code}: `{word}`");
+            }
+        }
     }
 
     #[test]
@@ -6738,6 +6939,123 @@ mod tests {
             PAPER,
             "a cell with no tile and no letter after it"
         );
+    }
+
+    /// The made-up page of [`the_cursor_one_blank_cell_before_a_choice_keeps_the_picture`]: written (state 6), its
+    /// English's second line `second` (the first: `a` and eight spaces).
+    fn gap_page(second: Vec<Option<char>>) -> OnScreen {
+        let mut first = vec![Some('a')];
+        first.extend([Some(' '); 8]);
+        OnScreen {
+            state: 6,
+            lines: vec![first.len(), second.len()],
+            english: vec![first, second],
+            ..screen(1.0)
+        }
+    }
+
+    /// The second line of [`gap_page`] on the screen: blank cells from the text's first cell (x 32) to x 120 but
+    /// where `no_tile` (cells with no text tile) and `lettered` (letters).
+    fn gap_cells(no_tile: &[i32], lettered: &[i32]) -> Vec<TextCell> {
+        let mut cells = vec![letter()];
+        for x in (32..=120).step_by(8) {
+            if no_tile.contains(&x) {
+                continue;
+            }
+            let glyph = if lettered.contains(&x) { 1 } else { BLANK };
+            cells.push(TextCell { x, y: 200, glyph, ..letter() });
+        }
+        cells
+    }
+
+    #[test]
+    fn the_cursor_one_blank_cell_before_a_choice_keeps_the_picture() {
+        // The training ground's `str3:0x27` (`Which?      Fight` / `            Raise KI`): the game draws its cursor
+        // `▶` two cells left of the choice's first letter (`03:A3F3`, `LDX #$05DC`: column 14, the choices from
+        // column 16), a blank cell of the window between them, where the English has a space
+        let overlay = overlay();
+        let mut kept = Kept::default();
+        let english = [' ', ' ', ' ', ' ', 'a', 'a'].map(Some).to_vec();
+        let cells = gap_cells(&[48], &[64, 72]);
+        let rgba = drawn(&overlay, &mut kept, Some(&gap_page(english)), &cells);
+        assert_eq!(pixel(&rgba, 2 * 48 + 3, 2 * 200 + 3), [7, 7, 7], "the cursor shows");
+        assert_eq!(
+            pixel(&rgba, 2 * 40 + 3, 2 * 200 + 3),
+            PAPER,
+            "the blank cell left of it is painted"
+        );
+        assert_eq!(pixel(&rgba, 2 * 56 + 3, 2 * 200 + 3), PAPER, "the blank cell right of it too");
+        assert_eq!(pixel(&rgba, 2 * 64 + 3, 2 * 200 + 3), PAPER, "and the choice's English letter");
+    }
+
+    #[test]
+    fn a_mark_with_no_glyph_one_blank_cell_before_a_letter_is_no_cursor() {
+        // The same cells, but the English has a mark of its text there the HD font has no glyph for (`…`, `None`): it
+        // is the English's, not a cursor, and takes the window's paper with the rest of the page
+        let overlay = overlay();
+        let english = vec![Some(' '), Some(' '), None, Some(' '), Some('a'), Some('a')];
+        let cells = gap_cells(&[48], &[64, 72]);
+        let mut kept = Kept::default();
+        let rgba = drawn(&overlay, &mut kept, Some(&gap_page(english)), &cells);
+        assert_eq!(pixel(&rgba, 2 * 48 + 3, 2 * 200 + 3), PAPER, "the mark is painted");
+        // A page whose English cells are not known (the intro's, the ending's): no cursor is taken one cell away
+        let mut kept = Kept::default();
+        let unknown = OnScreen { state: 6, ..screen(1.0) };
+        let rgba = drawn(&overlay, &mut kept, Some(&unknown), &cells);
+        assert_eq!(pixel(&rgba, 2 * 48 + 3, 2 * 200 + 3), PAPER, "no English to say: painted");
+    }
+
+    #[test]
+    fn a_mark_with_no_glyph_one_blank_cell_before_a_letter_on_a_portraits_first_line_is_no_cursor()
+    {
+        // A portrait's first line, its English's cells counted from the text's first cell as on its other lines
+        // (`every_line_of_a_portraits_page_starts_at_the_text_base`): `a …  aa` (the `…` with no text tile) on it is
+        // the mark of the English, painted (counted a cell off, its `…` would be the space before it, and show)
+        let overlay = overlay();
+        let first = vec![Some('a'), Some(' '), None, Some(' '), Some('a'), Some('a')];
+        let page = OnScreen {
+            state: 6,
+            portrait: true,
+            lines: vec![first.len(), 1],
+            english: vec![first, vec![Some(' ')]],
+            ..screen(1.0)
+        };
+        let mut cells = vec![letter()];
+        cells.extend([40, 56].map(|x| TextCell { x, glyph: BLANK, ..letter() }));
+        cells.extend([64, 72].map(|x| TextCell { x, ..letter() }));
+        let mut kept = Kept::default();
+        let rgba = drawn(&overlay, &mut kept, Some(&page), &cells);
+        assert_eq!(pixel(&rgba, 2 * 48 + 3, 2 * 184 + 3), PAPER, "the mark is painted");
+    }
+
+    #[test]
+    fn a_letter_one_blank_cell_before_a_letter_or_a_cell_two_blank_cells_before_one_is_no_cursor() {
+        // A letter of the English after a blank cell, a blank cell and a letter (`a  a`): its text, painted
+        let overlay = overlay();
+        let english = [' ', ' ', 'a', ' ', 'a', 'a'].map(Some).to_vec();
+        let mut kept = Kept::default();
+        let rgba =
+            drawn(&overlay, &mut kept, Some(&gap_page(english)), &gap_cells(&[], &[48, 64, 72]));
+        assert_eq!(pixel(&rgba, 2 * 48 + 3, 2 * 200 + 3), PAPER, "the letter is painted");
+        // A cell with no text tile two blank cells before the letter: one blank cell at most between a cursor and its
+        // choice
+        let english = [' ', ' ', ' ', ' ', ' ', 'a', 'a'].map(Some).to_vec();
+        let mut kept = Kept::default();
+        let rgba =
+            drawn(&overlay, &mut kept, Some(&gap_page(english)), &gap_cells(&[48], &[72, 80]));
+        assert_eq!(pixel(&rgba, 2 * 48 + 3, 2 * 200 + 3), PAPER, "two cells away: painted");
+        // Between it and the letter a cell with no text tile, not a blank cell (`…` of the English): painted
+        let english = vec![Some(' '), Some(' '), Some(' '), None, Some('a'), Some('a')];
+        let mut kept = Kept::default();
+        let rgba =
+            drawn(&overlay, &mut kept, Some(&gap_page(english)), &gap_cells(&[48, 56], &[64, 72]));
+        assert_eq!(pixel(&rgba, 2 * 48 + 3, 2 * 200 + 3), PAPER, "no blank cell between: painted");
+        // Left of it a letter, not a blank cell (`a▶ aa`): painted, as a mark after a letter is
+        let english = [' ', 'a', ' ', ' ', 'a', 'a'].map(Some).to_vec();
+        let mut kept = Kept::default();
+        let rgba =
+            drawn(&overlay, &mut kept, Some(&gap_page(english)), &gap_cells(&[48], &[40, 64, 72]));
+        assert_eq!(pixel(&rgba, 2 * 48 + 3, 2 * 200 + 3), PAPER, "a letter left of it: painted");
     }
 
     #[test]

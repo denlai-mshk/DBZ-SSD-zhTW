@@ -13,6 +13,12 @@ mod hotkeys;
 mod input;
 mod lang;
 mod language_pick;
+// The graphics backend of an Android start, from what the last start left (android_report.rs); tested on the host.
+#[cfg(any(target_os = "android", test))]
+mod launch_guard;
+// The report of a failed start: used by the Android app (android_report.rs), tested on the host.
+#[cfg(any(target_os = "android", test))]
+mod launch_report;
 mod layout;
 mod options;
 mod packs;
@@ -661,6 +667,9 @@ fn error_exit(error: &anyhow::Error) -> ExitCode {
         return ExitCode::from(EXIT_REPLAY);
     }
     eprintln!("error: {error:#}");
+    // The report a failed start shows on Android (`android_report`).
+    #[cfg(target_os = "android")]
+    crate::android_report::note(format!("error: {error:#}"));
     ExitCode::FAILURE
 }
 

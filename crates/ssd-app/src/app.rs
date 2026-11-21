@@ -2264,7 +2264,13 @@ fn windowed_loop(
     refresh_controls(&mut state, session, machine, &env);
     refresh_replays(&mut state, &env);
     let mut shown = (state.controls.speed, state.controls.slot);
+    // Android: how far the start got, until its first picture (`android_report::stage`).
+    #[cfg(target_os = "android")]
+    crate::android_report::stage(crate::launch_guard::Stage::Window);
     let mut video = video::Video::new(&video_subsystem, &window_title(shown.0, shown.1))?;
+    // Test builds only: a start that fails here, before the first frame (`android_report::test_failure`).
+    #[cfg(all(target_os = "android", debug_assertions))]
+    crate::android_report::test_failure();
     state.touch = window_touch(
         touch_on,
         touch::settings::Settings::from_values(&settings_file),
@@ -2283,12 +2289,16 @@ fn windowed_loop(
     let mut touch_previous = Joypad::default();
     let mut actions: Vec<PanelAction> = Vec::new();
     let mut fps = FpsCounter::default();
+    #[cfg(target_os = "android")]
+    crate::android_report::stage(crate::launch_guard::Stage::Audio);
     let mut audio = audio::Audio::open(&sdl);
     audio.set_settings(AudioSettings::from_values(
         &crate::options::read_settings().unwrap_or_default(),
     ));
     audio.load_voice(&crate::paths::data_dir());
     machine.set_audio_frequency(audio::Audio::frequency());
+    #[cfg(target_os = "android")]
+    crate::android_report::stage(crate::launch_guard::Stage::FirstFrame);
     let mut events = sdl.event_pump()?;
     // Keyboard keeps working without gamepad support. Opened pads are kept alive here; SDL also
     // announces the pads already connected at start-up as `GamepadAdded` events.
