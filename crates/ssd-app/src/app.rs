@@ -765,7 +765,11 @@ fn with_quit_confirm(
     let Some(question) = state.quit_confirm.as_ref() else {
         return (scene, overlay);
     };
-    let list = question.scene();
+    let (width, height) = scene.as_ref().map_or(
+        (ssd_menus::layout::WIDTH, ssd_menus::layout::HEIGHT),
+        ssd_menus::DrawList::canvas_size,
+    );
+    let list = question.scene_sized(width, height);
     let list = match state.hd.as_ref() {
         Some(hd) => hd.dressed(list),
         None => list,

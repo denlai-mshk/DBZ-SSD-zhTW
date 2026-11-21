@@ -1105,6 +1105,13 @@ impl Fit {
         Self::sized(picture, layout::WIDTH, layout::HEIGHT)
     }
 
+    /// The fit of a screen's own logical canvas.
+    #[must_use]
+    pub fn for_list(picture: egui::Rect, list: &DrawList) -> Self {
+        let (width, height) = list.canvas_size();
+        Self::sized(picture, width, height)
+    }
+
     /// The fit of a logical space of `width` x `height` in `picture` (the first-launch screens have their own).
     #[must_use]
     pub fn sized(picture: egui::Rect, width: f32, height: f32) -> Self {
@@ -1133,7 +1140,7 @@ impl Fit {
 /// `art`. The backdrop covers the picture; the logical layout is fitted to it (see [`Fit`]). The
 /// painting is clipped to the picture as well, so nothing can be drawn over the letterbox.
 pub fn paint(ui: &egui::Ui, picture: egui::Rect, list: &DrawList, art: &mut Art) {
-    paint_fit(ui, picture, &Fit::new(picture), list, art);
+    paint_fit(ui, picture, &Fit::for_list(picture, list), list, art);
 }
 
 /// Draws a stretched 4:3 menu in the same display space as the game, including when a 4:3 CRT receives a
@@ -1153,7 +1160,7 @@ pub fn paint_menu(
     }
     let layer = egui::LayerId::new(egui::Order::Background, ui.id().with("hd-menu-projection"));
     let painter = egui::Painter::new(ui.ctx().clone(), layer, canvas);
-    paint_with(ui, &painter, canvas, &Fit::new(canvas), list, art);
+    paint_with(ui, &painter, canvas, &Fit::for_list(canvas, list), list, art);
     let recorded = ui.ctx().graphics_mut(|graphics| std::mem::take(graphics.entry(layer)));
     let shapes = recorded.all_entries().cloned().collect();
     let projection = egui::emath::RectTransform::from_to(canvas, picture);
@@ -1655,9 +1662,9 @@ mod tests {
         values.set("video.display", 1);
         let video = crate::options::video::VideoSettings::from_values(&values);
         assert!(video.narrow && video.fullscreen);
-        let mut list = DrawList::new();
+        let mut list = DrawList::sized(960.0, 720.0);
         list.push(Op::Backdrop);
-        for x in [32.0, 1144.0] {
+        for x in [32.0, 824.0] {
             list.push(Op::Portrait {
                 rect: Rect::new(x, 28.0, 104.0, 104.0),
                 picture: Some(Picture::Face(0)),
@@ -1714,7 +1721,9 @@ mod tests {
                     (portrait.width() - portrait.height()).abs() < 0.01,
                     "{size:?}: {portrait:?}"
                 );
+                assert!(portrait.top() < 40.0, "no 16:9 vertical inset: {portrait:?}");
             }
+            assert!(portraits[0].left() < 40.0 && portraits[1].right() > 920.0);
             match &expected {
                 Some(previous) => {
                     assert_eq!(&portraits, previous, "the physical layout is signal-independent");
@@ -1827,6 +1836,52 @@ mod tests {
             output.drop_without_applying_deltas();
         }
         assert_eq!(answer, Some(crate::quit_confirm::Outcome::Quit));
+    }
+
+    #[test]
+    fn the_4_3_hud_fills_the_canvas_and_its_quit_question_remains_clickable() {
+        let ctx = measuring_context();
+        let mut question = crate::quit_confirm::QuitConfirm::default();
+        let list = question.scene_sized(960.0, 720.0);
+        for size in [egui::vec2(960.0, 720.0), egui::vec2(1280.0, 720.0)] {
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+            let mut art = Art::empty();
+            art.backdrop_shape.crop = true;
+            let canvas = art.menu_canvas(screen, true);
+            let fit = Fit::for_list(canvas, &list);
+            assert_eq!(fit.rect(Rect::new(0.0, 0.0, 960.0, 720.0)), canvas);
+            let projection = egui::emath::RectTransform::from_to(canvas, screen);
+            let at = projection * fit.point(600.0, 390.0);
+            let mut answer = None;
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    events: vec![
+                        egui::Event::PointerMoved(at),
+                        egui::Event::PointerButton {
+                            pos: at,
+                            button: egui::PointerButton::Primary,
+                            pressed: true,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                        egui::Event::PointerButton {
+                            pos: at,
+                            button: egui::PointerButton::Primary,
+                            pressed: false,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                    ..Default::default()
+                },
+                |ui| {
+                    let layer = crate::ui::Layer { list: &list, art: &mut art, menu: true };
+                    crate::ui::draw_game(ui, &[], Some(layer), true);
+                    answer = crate::ui::quit_confirm_pointer(ui, &mut question);
+                },
+            );
+            output.drop_without_applying_deltas();
+            assert_eq!(answer, Some(crate::quit_confirm::Outcome::Quit), "{size:?}");
+        }
     }
 
     /// The egui context the menus' text is measured with: the theme's fonts, laid out once. The
@@ -2002,28 +2057,24 @@ mod tests {
         };
         let mut screens = Vec::new();
         for cursor in 0..5 {
-            screens.push(ssd_menus::screens::command(&MenuView { cursor, ..base.clone() }));
+            let view = MenuView { cursor, ..base.clone() };
+            screens.push(ssd_menus::screens::command(&view));
+            screens.push(ssd_menus::screens::scene_aspect(&view, true));
         }
         for cursor in 0..4 {
-            screens.push(ssd_menus::screens::command(&MenuView {
-                town: true,
-                cursor,
-                ..base.clone()
-            }));
+            let view = MenuView { town: true, cursor, ..base.clone() };
+            screens.push(ssd_menus::screens::command(&view));
+            screens.push(ssd_menus::screens::scene_aspect(&view, true));
         }
         for cursor in 0..3 {
-            screens.push(ssd_menus::screens::command(&MenuView {
-                flying: true,
-                cursor,
-                ..base.clone()
-            }));
+            let view = MenuView { flying: true, cursor, ..base.clone() };
+            screens.push(ssd_menus::screens::command(&view));
+            screens.push(ssd_menus::screens::scene_aspect(&view, true));
         }
         for cursor in 0..7 {
-            screens.push(ssd_menus::screens::scene(&MenuView {
-                screen: Screen::Menu,
-                cursor,
-                ..base.clone()
-            }));
+            let view = MenuView { screen: Screen::Menu, cursor, ..base.clone() };
+            screens.push(ssd_menus::screens::scene(&view));
+            screens.push(ssd_menus::screens::scene_aspect(&view, true));
         }
         let items: Vec<Slot> = (0..24)
             .map(|i| Slot { object: i, attribute: 0xC0, name: "Dragon Radar Plus".into() })
@@ -2171,10 +2222,14 @@ mod tests {
                     let picture =
                         crate::layout::picture_rect(ppp, area, width, height, aspect, whole);
                     assert!(area.contains_rect(picture), "{picture:?} in {area:?}");
-                    let fit = Fit::new(picture);
-                    let canvas = fit.rect(Rect::new(0.0, 0.0, layout::WIDTH, layout::HEIGHT));
-                    assert!(picture.expand(0.01).contains_rect(canvas), "the logical space fits");
                     for (index, list) in screens.iter().enumerate() {
+                        let fit = Fit::for_list(picture, list);
+                        let (width, height) = list.canvas_size();
+                        let canvas = fit.rect(Rect::new(0.0, 0.0, width, height));
+                        assert!(
+                            picture.expand(0.01).contains_rect(canvas),
+                            "the logical space fits"
+                        );
                         for boxed in painted_boxes(&ctx, &fit, list) {
                             assert!(
                                 picture.expand(0.01).contains_rect(boxed),

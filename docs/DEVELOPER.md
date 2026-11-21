@@ -424,8 +424,12 @@ With Android's Stretch picture and Aspect 4:3, HD menus are first drawn on a 4:3
 destination as the cropped game. This also applies in Fullscreen: a 4:3 CRT can receive a 16:9 framebuffer and scale it
 physically, so fitting the menu to the framebuffer alone makes square portraits look tall. The projection includes
 tessellated text, portraits, cards, window frames and clipping, without changing their layout or proportions on the
-4:3 canvas. The game picture, frozen backdrop pixels and field overlays are unchanged, as are menus with Stretch off
-or Aspect 16:9. Window screenshots use the same projection, and the quit question's pointer uses its inverse.
+4:3 canvas. With Aspect 4:3 the field command and Menu HUD use a true 960 x 720 logical layout: portraits stay at the
+top corners, money stays top-centred, and command/help windows sit along the bottom, without a 16:9 band of empty
+space above and below. Their sizes and text proportions are preserved; the detailed screens retain their existing
+layout. This HUD layout also applies with Stretch off. The game picture, frozen backdrop pixels, field overlays and
+Aspect 16:9 are unchanged. Window screenshots use the same projection, and the centred quit question's pointer uses
+its inverse.
 
 The Accessibility page (this PC, keys `access.text_size`, `access.contrast`, `access.cursor`) changes how all the HD menus look (Menu, Items, Cheats,
 Options and the notices), never the game's own picture or Classic: Text size (Large makes every text a quarter bigger where there

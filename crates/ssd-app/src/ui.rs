@@ -231,7 +231,13 @@ fn paint_hd(ui: &Ui, picture: Rect, Layer { list, art, menu }: Layer<'_>, stretc
         hd::paint(ui, picture, list, art);
         picture
     };
-    ui.ctx().data_mut(|data| data.insert_temp(Id::new(HD_PICTURE), (picture, canvas)));
+    let (width, height) = list.canvas_size();
+    let mut fit = hd::Fit::for_list(canvas, list);
+    // The quit question's hit boxes use the default canvas, centred within this screen.
+    fit.origin +=
+        vec2((width - ssd_menus::layout::WIDTH) / 2.0, (height - ssd_menus::layout::HEIGHT) / 2.0)
+            * fit.scale;
+    ui.ctx().data_mut(|data| data.insert_temp(Id::new(HD_PICTURE), (picture, canvas, fit)));
 }
 
 /// Esc's question under the mouse, once it is drawn: the cursor follows the pointer onto an answer, and a click on
@@ -240,10 +246,9 @@ pub fn quit_confirm_pointer(
     ui: &Ui,
     question: &mut crate::quit_confirm::QuitConfirm,
 ) -> Option<crate::quit_confirm::Outcome> {
-    let (picture, canvas): (Rect, Rect) =
+    let (picture, canvas, fit): (Rect, Rect, hd::Fit) =
         ui.ctx().data(|data| data.get_temp(Id::new(HD_PICTURE)))?;
     let projection = egui::emath::RectTransform::from_to(picture, canvas);
-    let fit = hd::Fit::new(canvas);
     if fit.scale <= 0.0 {
         return None;
     }

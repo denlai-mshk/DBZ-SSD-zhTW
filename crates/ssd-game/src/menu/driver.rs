@@ -1378,7 +1378,8 @@ impl State {
             view.selected = self.selected(labels, probe.encounter_group());
         }
         let unbound = view.screen == Screen::Items && view.bag.is_none();
-        let mut list = screens::scene(&view);
+        let narrow = video::index(&self.options.pc, "video.aspect") == 1;
+        let mut list = screens::scene_aspect(&view, narrow);
         // A bag not bound yet shows the original's list, which has no foot for a line: the notice goes on top.
         if let Some(text) = self.notice.filter(|_| unbound) {
             list.append(screens::notice(text));
@@ -2063,6 +2064,17 @@ mod tests {
         assert_eq!(driver.curtain(), Curtain::Up);
         assert_eq!(frame(&mut driver, &mut menu, a), Joypad::default(), "live keys go to the HD");
         assert_eq!(driver.nav().screen(), Screen::Command);
+    }
+
+    #[test]
+    fn the_video_aspect_selects_the_field_hud_canvas_and_can_be_reverted() {
+        let mut driver = Driver::new(Labels::default());
+        let mut menu = FakeMenu::default();
+        open_by_player(&mut driver, &mut menu);
+        for (aspect, width) in [(0, 1280.0), (1, 960.0), (0, 1280.0)] {
+            driver.pc_options_mut().set("video.aspect", aspect);
+            assert_eq!(driver.scene(&menu.wram()).unwrap().canvas_size(), (width, 720.0));
+        }
     }
 
     #[test]
