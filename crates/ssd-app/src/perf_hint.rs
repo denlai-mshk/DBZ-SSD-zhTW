@@ -3,7 +3,8 @@
 //!
 //! The numbers are computed here on every platform and tested on the host. The calls into `libandroid.so` exist on
 //! Android only. They are looked up at run time, because the API is level 33 and the app runs from level 26: where a
-//! symbol is missing no session is made and the reports do nothing. Elsewhere a session only keeps its target.
+//! symbol is missing or the device refuses a session, no session is made and the reports do nothing. Elsewhere a
+//! session only keeps its target.
 
 use std::time::Duration;
 
@@ -165,7 +166,11 @@ mod android {
             // SAFETY: `tids` holds `len` thread ids of this process, and it lives across the call.
             let session =
                 unsafe { (api.create_session)(manager, tids.as_ptr(), tids.len(), target_ns) };
-            (!session.is_null()).then_some(Self { session, api })
+            if session.is_null() {
+                log::warn!("Android Performance Hint session refused; continuing without hints");
+                return None;
+            }
+            Some(Self { session, api })
         }
 
         /// Sets the target work duration of the session, in nanoseconds.
