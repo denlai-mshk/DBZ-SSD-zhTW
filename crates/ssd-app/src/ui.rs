@@ -984,9 +984,9 @@ mod tests {
                     let layer = Layer { list: &list, art: &mut art, menu };
                     draw_game(ui, &games, Some(layer), true);
                 });
-                let picture: Option<(Rect, Rect)> =
+                let picture: Option<(Rect, Rect, hd::Fit)> =
                     ctx.data(|data| data.get_temp(Id::new(HD_PICTURE)));
-                assert_eq!(picture.map(|(rect, _)| rect), Some(screen));
+                assert_eq!(picture.map(|(rect, _, _)| rect), Some(screen));
                 output.drop_without_applying_deltas();
             }
         }

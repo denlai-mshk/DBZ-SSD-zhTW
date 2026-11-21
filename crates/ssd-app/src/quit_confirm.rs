@@ -119,6 +119,7 @@ impl QuitConfirm {
     }
 
     /// The window in the menus' logical space (English words: the HD layer translates them).
+    #[cfg(test)]
     #[must_use]
     pub fn scene(self) -> DrawList {
         self.scene_sized(WIDTH, HEIGHT)

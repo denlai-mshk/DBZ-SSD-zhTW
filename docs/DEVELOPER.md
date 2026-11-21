@@ -401,7 +401,14 @@ video changes?": Keep writes it to `ssd.settings`, Revert (B) puts the old choic
 reverts (the cursor starts on Revert). A `--hd-scale` or `--enhanced-look` flag wins for its run until that very row is
 changed on the page; headless runs, snapshots and replays ignore the saved file. Scanlines, the CRT filter and the 4:3 crop
 are a last pass of the app over the picture (`crates/ssd-app/src/filter.rs`), not part of `ssd-hd`: with them off the picture
-is the renderer's own, byte for byte.
+is the renderer's own, byte for byte. The frozen field behind HD menus uses the same crop and filters as live play,
+including Scanlines and CRT filtering in 16:9; this consistency is intentional. The menu's own text and frames are
+not part of that filtered background.
+
+In 4:3, Fly/Land presentation suppresses the original field portraits and command windows, retaining the map and
+objects. Suppression continues for four field frames after the menu closes and is cleared by a new menu, battle,
+field hold or reset. Switching to 16:9 disables suppression for the next rendered frame. Synthetic regression tests cover these
+paths and rendered pixels; rejected-flight messages and transition flicker still need real-device checks.
 
 The Accessibility page (this PC, keys `access.text_size`, `access.contrast`, `access.cursor`) changes how all the HD menus look (Menu, Items, Cheats,
 Options and the notices), never the game's own picture or Classic: Text size (Large makes every text a quarter bigger where there

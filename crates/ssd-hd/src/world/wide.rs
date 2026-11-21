@@ -2777,6 +2777,10 @@ mod tests {
 
     /// [`state`] with the type of each object.
     fn state_of(blocks: u8, camera: (u16, u16), objects: &[(u8, i32, i32)]) -> FieldState {
+        FieldState::from_wram(&field_wram(blocks, camera, objects)).unwrap()
+    }
+
+    fn field_wram(blocks: u8, camera: (u16, u16), objects: &[(u8, i32, i32)]) -> Vec<u8> {
         let mut wram = vec![0; 0x20000];
         wram[0x24] = 0x06;
         wram[0x702] = 1;
@@ -2791,7 +2795,7 @@ mod tests {
             wram[at + 2..at + 4].copy_from_slice(&((x + i32::from(camera.0)) as u16).to_le_bytes());
             wram[at + 4..at + 6].copy_from_slice(&((y + i32::from(camera.1)) as u16).to_le_bytes());
         }
-        FieldState::from_wram(&wram).unwrap()
+        wram
     }
 
     /// A render log of the field for `state`: noise for the characters and the palette, BG2's
@@ -3702,7 +3706,7 @@ mod tests {
         for (original, hidden) in log.entries.iter().zip(&quiet.entries) {
             assert_eq!(hidden.regs.main_bg, [false, true, false, false]);
             assert_eq!(hidden.regs.sub_bg, [false; 4]);
-            let mut restored = hidden.clone();
+            let mut restored = *hidden;
             restored.regs.main_bg = original.regs.main_bg;
             restored.regs.sub_bg = original.regs.sub_bg;
             assert_eq!(
@@ -3729,6 +3733,56 @@ mod tests {
         let restored = run.note_hd_shared(&wram, Some(&mode7), hd).unwrap();
         assert_ne!(changed.serial, restored.serial);
         assert_eq!(original.picture.picture.rgba, restored.picture.picture.rgba);
+    }
+
+    #[test]
+    fn hide_field_ui_removes_rendered_windows_but_preserves_the_map_and_objects() {
+        let rom = rom();
+        let wram = field_wram(2, CAMERA, &[]);
+        let state = FieldState::from_wram(&wram).unwrap();
+        let mut log = field_log(&rom, &state, &[(40, 70, 3, false)]);
+        opaque_objects(&mut log);
+        for entry in &mut log.entries {
+            entry.regs.main_bg = [true, true, true, false];
+            entry.regs.mode_1_bg3_priority = true;
+            entry.regs.bg_map_base[0] = 0x6800;
+            entry.regs.bg_map_base[2] = 0x2C00;
+            entry.regs.bg_char_base[0] = 0x4000;
+            entry.regs.bg_char_base[2] = 0x5000;
+        }
+        log.vram[0x6800..0x6C00].fill(0x2001);
+        log.vram[0x2C00..0x3000].fill(0x2001);
+        log.vram[0x4010..0x4018].fill(0x00FF);
+        log.vram[0x5008..0x5010].fill(0xFF00);
+        log.cgram_start[0x81] = 0x03FF;
+        let mut quiet = log.clone();
+        for entry in &mut quiet.entries {
+            entry.regs.main_bg[0] = false;
+            entry.regs.main_bg[2] = false;
+        }
+        let options = WideOptions { width: 372, hud: HudPlacement::Window };
+        let hd = HdOptions { scale: 2, look: crate::Look::Pixel };
+        let expected = WideRenderer::new()
+            .render_hd(Rom(&rom), 0x06, Some(&state), &quiet, options, hd)
+            .unwrap();
+        let mut no_objects = quiet.clone();
+        for entry in &mut no_objects.entries {
+            entry.regs.main_obj = false;
+        }
+        let without_objects = WideRenderer::new()
+            .render_hd(Rom(&rom), 0x06, Some(&state), &no_objects, options, hd)
+            .unwrap();
+        assert_ne!(expected.picture.rgba, without_objects.picture.rgba, "the fixture has objects");
+        let mut run = WideRun::new(&rom);
+        let original = run.note_hd_shared(&wram, Some(&log), hd).unwrap();
+        assert_eq!(original.picture.scene, Scene::Field);
+        assert_ne!(original.picture.picture.rgba, expected.picture.rgba, "the fixture has windows");
+        run.set_hide_field_ui(true);
+        let hidden = run.note_hd_shared(&wram, Some(&log), hd).unwrap();
+        assert_eq!(hidden.picture.picture.rgba, expected.picture.rgba);
+        run.set_hide_field_ui(false);
+        let restored = run.note_hd_shared(&wram, Some(&log), hd).unwrap();
+        assert_eq!(restored.picture.picture.rgba, original.picture.picture.rgba);
     }
 
     #[test]

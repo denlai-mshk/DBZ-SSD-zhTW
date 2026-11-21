@@ -2666,6 +2666,115 @@ mod tests {
         assert!(!driver.travel_transition(&menu.wram()), "Talk remains the original's message");
     }
 
+    fn after_travel(flying: bool) -> (Driver, FakeMenu) {
+        let mut driver = Driver::new(Labels::default());
+        let mut menu = FakeMenu::default();
+        menu.flying = flying;
+        open_by_player(&mut driver, &mut menu);
+        if !flying {
+            driver.key(Key::Down, &menu.wram());
+            driver.key(Key::Down, &menu.wram());
+        }
+        driver.key(Key::Confirm, &menu.wram());
+        assert!(driver.travel_transition(&menu.wram()), "suppressed from the choice");
+        for _ in 0..240 {
+            frame(&mut driver, &mut menu, Joypad::default());
+            if driver.curtain() == Curtain::Down && !driver.busy() {
+                assert_eq!(menu.field, 0);
+                assert_eq!(menu.flying, !flying);
+                return (driver, menu);
+            }
+        }
+        panic!("the travel did not return to the field");
+    }
+
+    #[test]
+    fn travel_presentation_lasts_exactly_four_field_frames_after_the_menu_closes() {
+        for flying in [false, true] {
+            let (mut driver, mut menu) = after_travel(flying);
+            assert!(driver.travel_transition(&menu.wram()), "the first closing frame");
+            for remaining in (0..4).rev() {
+                frame(&mut driver, &mut menu, Joypad::default());
+                assert_eq!(
+                    driver.travel_transition(&menu.wram()),
+                    remaining > 0,
+                    "{remaining} tail frames after flying {flying}"
+                );
+            }
+            frame(&mut driver, &mut menu, Joypad::default());
+            assert!(!driver.travel_transition(&menu.wram()), "no stale suppression");
+        }
+    }
+
+    #[test]
+    fn travel_presentation_tail_is_cleared_by_a_menu_battle_field_hold_or_reset() {
+        for flying in [false, true] {
+            for (field, screen, battle) in [(1, 0, false), (2, 17, true), (5, 3, false)] {
+                let (mut driver, mut menu) = after_travel(flying);
+                menu.field = field;
+                menu.screen = screen;
+                menu.battle = battle;
+                frame(&mut driver, &mut menu, Joypad::default());
+                assert!(!driver.travel_transition(&menu.wram()));
+                menu.field = 0;
+                menu.screen = 0;
+                menu.battle = false;
+                frame(&mut driver, &mut menu, Joypad::default());
+                assert!(!driver.travel_transition(&menu.wram()), "the tail cannot resume");
+            }
+            let (mut driver, menu) = after_travel(flying);
+            driver.reset();
+            assert!(!driver.travel_transition(&menu.wram()), "a reset clears the tail");
+        }
+    }
+
+    #[test]
+    fn non_travel_commands_never_suppress_native_field_ui() {
+        for row in [0, 1, 3, 4] {
+            for hold in [false, true] {
+                let mut driver = Driver::new(Labels::default());
+                let mut menu = FakeMenu::default();
+                menu.hold = hold;
+                open_by_player(&mut driver, &mut menu);
+                for _ in 0..row {
+                    driver.key(Key::Down, &menu.wram());
+                }
+                driver.key(Key::Confirm, &menu.wram());
+                for _ in 0..240 {
+                    assert!(!driver.travel_transition(&menu.wram()), "row {row}, hold {hold}");
+                    frame(&mut driver, &mut menu, Joypad::default());
+                }
+                assert!(!driver.busy());
+                if row <= 1 {
+                    assert!(menu.message, "the original's Talk or Look message is waiting");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn menu_entries_never_start_travel_presentation() {
+        for row in 0..5 {
+            let mut driver = Driver::new(Labels::default());
+            let mut menu = FakeMenu::default();
+            open_by_player(&mut driver, &mut menu);
+            for _ in 0..4 {
+                driver.key(Key::Down, &menu.wram());
+            }
+            choose(&mut driver, &mut menu, Key::Confirm);
+            assert_eq!(driver.screen(), Some(Screen::Menu));
+            for _ in 0..row {
+                driver.key(Key::Down, &menu.wram());
+            }
+            driver.key(Key::Confirm, &menu.wram());
+            for _ in 0..240 {
+                assert!(!driver.travel_transition(&menu.wram()), "menu row {row}");
+                frame(&mut driver, &mut menu, Joypad::default());
+            }
+            assert!(!driver.busy());
+        }
+    }
+
     #[test]
     fn without_a_save_or_a_list_the_bag_stays_unbound_and_the_list_is_the_originals() {
         let mut driver = Driver::new(Labels::default());

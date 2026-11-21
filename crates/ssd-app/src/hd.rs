@@ -1100,6 +1100,7 @@ pub struct Fit {
 
 impl Fit {
     /// The fit of the logical space in `picture`.
+    #[cfg(test)]
     #[must_use]
     pub fn new(picture: egui::Rect) -> Self {
         Self::sized(picture, layout::WIDTH, layout::HEIGHT)
@@ -1411,6 +1412,129 @@ mod tests {
     use super::*;
     use ssd_menus::Style;
 
+    fn presentation_hd() -> Hd {
+        let rom = crate::test_support::sram_counter_rom();
+        let labels = ssd_menus::Labels::default();
+        Hd {
+            driver: Driver::new(labels.clone()),
+            art: Art::empty(),
+            wide: WideRun::new(&rom),
+            notice: CheatNotice::default(),
+            shown_labels: labels.clone(),
+            labels,
+            language_saved: None,
+            ui_text: None,
+            rom: std::sync::Arc::from(rom),
+            editor: None,
+            editor_wanted: false,
+            editor_allowed: false,
+            level_cap: None,
+        }
+    }
+
+    fn field_ui_log() -> FrameLog {
+        let regs = ssd_oracle::LineRegs {
+            brightness: 15,
+            bg_mode: 1,
+            mode_1_bg3_priority: true,
+            main_bg: [true, true, true, false],
+            bg_map_base: [0x6800, 0x6000, 0x2C00, 0],
+            bg_char_base: [0x4000, 0x2000, 0x5000, 0],
+            ..Default::default()
+        };
+        let mut log = FrameLog {
+            complete: true,
+            height: 224,
+            h_hi_res: false,
+            v_hi_res: false,
+            entries: (1..=224)
+                .map(|scanline| ssd_oracle::LineEntry { scanline, regs, ..Default::default() })
+                .collect(),
+            cgram_start: vec![0; 256],
+            cgram_writes: Vec::new(),
+            vram: vec![0; 32768],
+            vram_writes: Vec::new(),
+            oam_low: vec![0; 512],
+            oam_high: vec![0; 32],
+            oam_writes: Vec::new(),
+        };
+        // A red map, one green BG1 portrait tile and one blue BG3 window tile.
+        log.cgram_start[1..4].copy_from_slice(&[0x001F, 0x03E0, 0x7C00]);
+        log.vram[0x2000..0x2008].fill(0x00FF);
+        log.vram[0x4010..0x4018].fill(0xFF00);
+        log.vram[0x5008..0x5010].fill(0xFFFF);
+        log.vram[0x6800] = 0x2001;
+        log.vram[0x2C02] = 0x2001;
+        log
+    }
+
+    #[test]
+    fn prepare_view_hides_native_field_ui_only_in_4_3_and_restores_it_in_16_9() {
+        let log = field_ui_log();
+        let options = ssd_hd::HdOptions { scale: 2, look: ssd_hd::Look::Pixel };
+        let pixel = |shared: &SharedHd, x: usize| {
+            let picture = &shared.picture.picture;
+            let x = usize::try_from(picture.logical.x).unwrap() + x * picture.scale as usize;
+            let y = usize::try_from(picture.logical.y).unwrap() + 2 * picture.scale as usize;
+            let at = (y * picture.width as usize + x) * 4;
+            <[u8; 4]>::try_from(&picture.rgba[at..at + 4]).unwrap()
+        };
+        for screen in [1, 5] {
+            let mut hd = presentation_hd();
+            let mut wram = vec![0; 0x2_0000];
+            wram[(d::FIELD_STATE - 0x7E_0000) as usize] = 1;
+            wram[(d::MENU_SCREEN - 0x7E_0000) as usize] = screen;
+            hd.frame(&wram, None, Joypad::default());
+            assert!(hd.driver.travel_transition(&wram));
+            for narrow in [false, true, false, true, false] {
+                hd.prepare_view(&wram, narrow);
+                let shown = hd.note_frame_hd_shared(&wram, Some(&log), options).unwrap();
+                let map = [255, 0, 0, 255];
+                assert_eq!(
+                    pixel(&shown, 2),
+                    if narrow { map } else { [0, 255, 0, 255] },
+                    "screen {screen}, 4:3 {narrow}: the portrait"
+                );
+                assert_eq!(
+                    pixel(&shown, 18),
+                    if narrow { map } else { [0, 0, 255, 255] },
+                    "screen {screen}, 4:3 {narrow}: the window"
+                );
+                assert_eq!(pixel(&shown, 40), map, "the map is unchanged");
+            }
+            wram[(d::FIELD_STATE - 0x7E_0000) as usize] = 0;
+            hd.frame(&wram, None, Joypad::default());
+            hd.prepare_view(&wram, true);
+            let restored = hd.note_frame_hd_shared(&wram, Some(&log), options).unwrap();
+            assert_eq!(pixel(&restored, 2), [0, 255, 0, 255], "the transition ended");
+        }
+    }
+
+    #[test]
+    fn prepare_view_does_not_hide_native_ui_for_other_menu_screens_or_battles() {
+        let log = field_ui_log();
+        let options = ssd_hd::HdOptions { scale: 2, look: ssd_hd::Look::Pixel };
+        for (screen, battle) in
+            [(0, false), (2, false), (4, false), (6, false), (13, false), (1, true), (5, true)]
+        {
+            let mut hd = presentation_hd();
+            let mut wram = vec![0; 0x2_0000];
+            wram[(d::FIELD_STATE - 0x7E_0000) as usize] = 1;
+            wram[(d::MENU_SCREEN - 0x7E_0000) as usize] = screen;
+            wram[(d::CONTEXT_61 - 0x7E_0000) as usize] = u8::from(battle);
+            hd.frame(&wram, None, Joypad::default());
+            assert!(!hd.driver.travel_transition(&wram));
+            hd.prepare_view(&wram, false);
+            let wide = hd.note_frame_hd_shared(&wram, Some(&log), options).unwrap();
+            hd.prepare_view(&wram, true);
+            let narrow = hd.note_frame_hd_shared(&wram, Some(&log), options).unwrap();
+            assert_eq!(
+                wide.picture.picture.rgba, narrow.picture.picture.rgba,
+                "screen {screen}, battle {battle}"
+            );
+        }
+    }
+
     /// A 16:9 Enhanced picture of one colour, lacking art still being read (`pending`) or not.
     fn wide_picture(colour: u8, pending: bool) -> SharedHd {
         let rect = ssd_hd::Rect { x: 0, y: 0, width: 4, height: 2 };
@@ -1518,6 +1642,9 @@ mod tests {
         let frame = machine.frame();
         let shapes = [
             Shape::default(),
+            Shape { crop: false, filters: filter::Filters { scanlines: 2, crt: 0 } },
+            Shape { crop: false, filters: filter::Filters { scanlines: 0, crt: 2 } },
+            Shape { crop: false, filters: filter::Filters { scanlines: 1, crt: 2 } },
             Shape { crop: true, filters: filter::Filters::default() },
             Shape { crop: true, filters: filter::Filters { scanlines: 2, crt: 1 } },
             Shape { crop: true, filters: filter::Filters { scanlines: 1, crt: 2 } },

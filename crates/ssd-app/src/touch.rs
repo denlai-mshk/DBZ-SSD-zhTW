@@ -1470,7 +1470,7 @@ mod tests {
         let mut t = touch();
         for table in tables {
             t.set_words(Some(std::sync::Arc::new(ssd_menus::ui_text::UiText::parse(table))));
-            assert_eq!(t.tr("Picture: Stretch"), "畫面：拉伸");
+            assert_eq!(t.tr("Picture: Stretch"), "畫面：延展");
         }
     }
 
