@@ -57,24 +57,24 @@ battle:9	{name:1}的\n連續能量波！{auto}	k1:9
 battle:10	{name:1}的\n太陽拳！{auto}	k1:10
 battle:11	{name:2}\n眼睛被閃到了。{auto}	k1:11
 battle:12	對{name:2}\n沒有效果。{auto}	k1:12
-battle:13	{name:1}的\n龜派氣功！{auto}	k1:13
+battle:13	{name:1}的\n龜波氣功！{auto}	k1:13
 battle:14	{name:1}的\n{num:1}倍界王拳！{auto}	k1:14
-battle:15	{name:1}的\n{num:1}倍界王拳\n龜派氣功！{auto}	k1:15
-battle:16	{name:1}的\n元氣玉！{auto}	k1:16
+battle:15	{name:1}的\n{num:1}倍界王拳\n龜波氣功！{auto}	k1:15
+battle:16	{name:1}的\n元氣彈！{auto}	k1:16
 battle:17	{name:1}的\n強力能量波！{auto}	k1:17
 battle:18	{name:1}的\n魔閃光！{auto}	k1:18
-battle:19	{name:1}的\n魔光砲！{auto}	k1:19
-battle:20	{name:1}的\n連續魔光砲！{auto}	k1:20
-battle:21	{name:1}的\n爆裂魔光砲！{auto}	k1:21
-battle:22	{name:1}的\n魔貫光殺砲！{auto}	k1:22
+battle:19	{name:1}的\n魔光炮！{auto}	k1:19
+battle:20	{name:1}的\n連續魔光炮！{auto}	k1:20
+battle:21	{name:1}的\n爆裂魔光炮！{auto}	k1:21
+battle:22	{name:1}的\n魔貫光殺炮！{auto}	k1:22
 battle:23	{name:1}的\n擴散能量波！{auto}	k1:23
 battle:24	{name:1}的\n氣圓斬！{auto}	k1:24
 battle:25	{name:1}的\n連續氣圓斬！{auto}	k1:25
-battle:26	{name:1}的\n氣功砲！{auto}	k1:26
+battle:26	{name:1}的\n氣功炮！{auto}	k1:26
 battle:27	{name:1}的\n四身拳！{auto}	k1:27
-battle:28	{name:1}的\n四身拳氣功砲！{auto}	k1:28
-battle:29	{name:1}的\n操氣彈！{auto}	k1:29
-battle:30	{name:1}的\n特大操氣彈！{auto}	k1:30
+battle:28	{name:1}的\n四身拳氣功炮！{auto}	k1:28
+battle:29	{name:1}的\n繰氣彈！{auto}	k1:29
+battle:30	{name:1}的\n特大繰氣彈！{auto}	k1:30
 battle:31	{name:1}的\n洞洞波！{auto}	k1:31
 battle:32	{name:1}的\n超能力！{auto}	k1:32
 battle:33	{name:2}\n無法攻擊了。{auto}	k1:33
@@ -90,18 +90,18 @@ battle:42	{name:1}的\n能量彈！{auto}	k1:42
 battle:43	{name:1}的\n連續能量彈！{auto}	k1:43
 battle:44	{name:1}的\n雙重攻擊！{auto}	k1:44
 battle:45	{name:1}的\n能量砲！{auto}	k1:45
-battle:46	{name:1}的\n時間停止！{auto}	k1:46
+battle:46	{name:1}的\n時間停頓！{auto}	k1:46
 battle:47	{name:1}的\n定身術！{auto}	k1:47
 battle:48	{name:2}\n無法動彈了。{auto}	k1:48
 battle:49	{name:1}的\n念動力！{auto}	k1:49
 battle:50	{name:1}的\n三重攻擊！{auto}	k1:50
-battle:51	{name:1}的\n消除砲！{auto}	k1:51
+battle:51	{name:1}的\n破壞炮！{auto}	k1:51
 battle:52	{name:1}的\n超級格鬥攻擊！{auto}	k1:52
 battle:53	{name:1}的\n音速攻擊！{auto}	k1:53
 battle:54	賓達與捷斯的\n紫色彗星衝擊！{auto}	k1:54
-battle:55	{name:1}的\n爆炸球！{auto}	k1:55
+battle:55	{name:1}的\n殛光球！{auto}	k1:55
 battle:56	{name:1}的\n力量提升！{auto}	k1:56
-battle:57	{name:1}的\n交換身體！{auto}	k1:57
+battle:57	{name:1}的\n轉換身體！{auto}	k1:57
 battle:58	{name:1}\n和{name:2}\n交換了身體。{auto}	k1:58
 battle:59	{name:3}\n還在緊追不捨。{auto}	k1:59
 battle:60	{name:1}的\n強力能量彈！{auto}	k1:60
@@ -231,7 +231,7 @@ battle:179	和界王大人\n進行實戰修業！	k1:179
 battle:180	和界王大人\n進行實戰修業！	k1:180
 battle:181	笛子魔童死去的同時，\n天神也死了！	k1:181
 battle:182	悟空正在\n聚集元氣！{auto}	k1:182
-battle:183	悟空的\n超元氣玉！！{auto}	k1:183
+battle:183	悟空的\n超元氣彈！！{auto}	k1:183
 battle:184	「嘿嘿嘿……竟然\n又跟你這混帳東西\n交手了……！」	k1:184
 battle:185	「拉…拿迪斯，\n立巴？\n這是怎麼回事？」	k1:185
 battle:186	「笛子魔童，\n把他們一口氣\n全收拾掉吧！」	k1:186
@@ -583,7 +583,7 @@ str2:0x06D	{portrait:34}「很好，不死心又來啦。\n放馬過來吧，\n{
 str2:0x06E	{portrait:34}「很好，不死心又來啦。\n放馬過來吧，\n{name:1}！」	k2:110
 str2:0x06F	{portrait:34}「悟空，如今你已經\n比我還要強了！」	k2:111
 str2:0x06F/p2	{portrait:00}「多虧了界王大人。」	k2:111
-str2:0x06F/p3	{portrait:34}「接下來，終於！\n我要傳授你厲害的\n必殺技『界王拳』\n和『元氣玉』！」	k2:111
+str2:0x06F/p3	{portrait:34}「接下來，終於！\n我要傳授你厲害的\n必殺技『界王拳』\n和『元氣彈』！」	k2:111
 str2:0x070	{portrait:00}「咦咦！必殺技！\n好、好厲害！	k2:112 split
 str2:0x070/p2	快、快點教我！」	k2:112 split
 str2:0x070/p3	{portrait:34}「在那之前，\n先來喝杯茶吧……。」	k2:112 split
@@ -1202,7 +1202,7 @@ string:33	無法使用	names_strings:33
 string:34	再	names_strings:34 override
 string:35	對	names_strings:35 override
 string:36	要繼續界王拳嗎？	names_strings:36
-string:37	要發射元氣玉嗎？	names_strings:37
+string:37	要發射元氣彈嗎？	names_strings:37
 string:38	元氣	names_strings:38
 string:39	捨身	names_strings:39
 string:40	用哪筆資料？	names_strings:40
@@ -1318,11 +1318,11 @@ attack:1	衝擊波	names_attacks:1
 attack:2	能量波	names_attacks:2
 attack:3	能量波	names_attacks:3
 attack:4	太陽拳	names_attacks:4
-attack:5	龜派氣功	names_attacks:5
-attack:6	魔光砲	names_attacks:6
-attack:7	魔光砲	names_attacks:7
-attack:8	魔光砲	names_attacks:8
-attack:9	魔貫光殺砲	names_attacks:9
+attack:5	龜波氣功	names_attacks:5
+attack:6	魔光炮	names_attacks:6
+attack:7	魔光炮	names_attacks:7
+attack:8	魔光炮	names_attacks:8
+attack:9	魔貫光殺炮	names_attacks:9
 attack:10	能量波	names_attacks:10
 attack:11	變身	names_attacks:11
 attack:12	溶解液	names_attacks:12
@@ -1333,11 +1333,11 @@ attack:16	雙重攻擊	names_attacks:16
 attack:17	魔閃光	names_attacks:17
 attack:18	擴散能量波	names_attacks:18
 attack:19	氣圓斬	names_attacks:19
-attack:20	氣功砲	names_attacks:20
+attack:20	氣功炮	names_attacks:20
 attack:21	四身拳	names_attacks:21
 attack:22	四身拳	names_attacks:22
-attack:23	操氣彈	names_attacks:23
-attack:24	操氣彈	names_attacks:24
+attack:23	繰氣彈	names_attacks:23
+attack:24	繰氣彈	names_attacks:24
 attack:25	洞洞波	names_attacks:25
 attack:26	超能力	names_attacks:26
 attack:27	精神攻擊	names_attacks:27
@@ -1346,35 +1346,35 @@ attack:29	吉力克砲	names_attacks:29
 attack:30	能量球	names_attacks:30
 attack:31	發光彈	names_attacks:31
 attack:32	能量砲	names_attacks:32
-attack:33	時間停止	names_attacks:33
+attack:33	時間停頓	names_attacks:33
 attack:34	定身術	names_attacks:34
 attack:35	念動力	names_attacks:35
 attack:36	三重攻擊	names_attacks:36
 attack:37	防護罩	names_attacks:37
-attack:38	消除砲	names_attacks:38
+attack:38	破壞炮	names_attacks:38
 attack:39	奇蹟攻擊	names_attacks:39
 attack:40	音速攻擊	names_attacks:40
 attack:41	彗星衝擊	names_attacks:41
 attack:42	分離十字	names_attacks:42
-attack:43	爆炸球	names_attacks:43
+attack:43	殛光球	names_attacks:43
 attack:44	力量提升	names_attacks:44
 attack:45	真空波	names_attacks:45
-attack:46	交換身體	names_attacks:46
+attack:46	轉換身體	names_attacks:46
 attack:47	德拉丘光束	names_attacks:47
 attack:48	菲利切割刃	names_attacks:48
 attack:49	精神光束	names_attacks:49
 attack:50	追蹤氣圓斬	names_attacks:50
 attack:51	界王拳	names_attacks:51
-attack:52	龜派氣功	names_attacks:52 override
-attack:53	元氣玉	names_attacks:53
-attack:54	元氣玉	names_attacks:54
+attack:52	龜波氣功	names_attacks:52 override
+attack:53	元氣彈	names_attacks:53
+attack:54	元氣彈	names_attacks:54
 attack:55	氣圓斬	names_attacks:55
 attack:56	能量波	names_attacks:56
 attack:57	能量波	names_attacks:57
-attack:58	魔光砲	names_attacks:58
+attack:58	魔光炮	names_attacks:58
 attack:59	能量彈	names_attacks:59
 attack:60	四身拳	names_attacks:60
-attack:61	操氣彈	names_attacks:61
+attack:61	繰氣彈	names_attacks:61
 attack:62	氣圓斬	names_attacks:62
 attack:63	戰鬥修業	names_attacks:63
 attack:64	戰鬥修業	names_attacks:64
@@ -1440,13 +1440,13 @@ block:0x36	手動\n自動	menu_blocks:36
 block:0x37	能力\n排序\n速度	menu_blocks:37
 block:0x41	已經全滿，\n使用也\n沒有效果。	menu_blocks:41 override
 block:0x42	戰鬥\n卡牌\n選單	menu_blocks:42
-block:0x44	完成了！\n　　超元氣玉！	menu_blocks:44
+block:0x44	完成了！\n　　超元氣彈！	menu_blocks:44
 block:0x45	存檔到\n幾號？\n　　01\n　　02\n　　03	menu_blocks:45 override
 block:0x49	這樣好嗎？　　　　是\n　　　　　　　　　　　否	menu_blocks:49
 block:0x4A	交談\n調查\n卡牌\n選單	menu_blocks:4A
 block:0x4B	特訓\n結束\n選單	menu_blocks:4B
 block:0x4C	是\n否	menu_blocks:4C
-block:0x4D	ＫＩ不足　要放棄\n元氣玉嗎？　　　　　是\n　　　　　　　　　　　　否	menu_blocks:4D
+block:0x4D	ＫＩ不足　要放棄\n元氣彈嗎？　　　　　是\n　　　　　　　　　　　　否	menu_blocks:4D
 block:0x4E	戰鬥\n逃跑\n選單	menu_blocks:4E
 block:0x4F	資料\n　　已損毀！	menu_blocks:4F
 ending:0	經過一場大激戰，超戰士\n終於打倒宇宙帝王菲利！	captions:0:1

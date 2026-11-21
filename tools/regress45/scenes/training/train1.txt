@@ -1,0 +1,21 @@
+@prefix battle 3690
+# teleport into the training ground (spot 8) by --wram at 3700 (scenarios.py TRAIN), walk up, Talk
+140 -
+60 up
+20 -
+4 a
+30 -
+4 a
+300 -
+# str3:0x25 "Begin the training?" YES / NO (the cursor of 01:D54C, column 20): down to NO, up to YES
+4 down
+80 -
+4 up
+80 -
+# YES: str3:0x27 "Which?" Fight / Raise KI (the cursor of 03:A3F3, column 14): down, up
+4 a
+200 -
+4 down
+200 -
+4 up
+200 -

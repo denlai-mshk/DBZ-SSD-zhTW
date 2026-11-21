@@ -161,6 +161,11 @@ fn open_gpu(window: &Window) -> anyhow::Result<Gpu> {
                 .map_err(|e| anyhow::anyhow!("no wgpu adapter: {e}"))?;
             let info = adapter.get_info();
             log::info!("wgpu adapter {} ({:?}, {:?})", info.name, info.backend, info.device_type);
+            #[cfg(target_os = "android")]
+            crate::android_report::gpu_opened(format!(
+                "{} / {:?} / {} {}",
+                info.name, info.backend, info.driver, info.driver_info
+            ));
             if more && info.device_type == wgpu::DeviceType::Cpu {
                 anyhow::bail!("{} is a software adapter", info.name);
             }
@@ -171,6 +176,10 @@ fn open_gpu(window: &Window) -> anyhow::Result<Gpu> {
             Ok(gpu) => return Ok(gpu),
             Err(e) => {
                 log::warn!("graphics backend {backend:?} failed: {e:#}");
+                #[cfg(target_os = "android")]
+                crate::android_report::gpu_failed(format!(
+                    "graphics backend {backend:?} failed: {e:#}"
+                ));
                 last = e;
             }
         }
@@ -404,6 +413,9 @@ impl Video {
         let view = surface_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
         self.canvas.paint(pass, &view, [self.surface_config.width, self.surface_config.height]);
         self.canvas.queue().present(surface_texture);
+        // Android: the start has drawn its first picture (`android_report::first_frame`).
+        #[cfg(target_os = "android")]
+        crate::android_report::first_frame();
         Ok(())
     }
 

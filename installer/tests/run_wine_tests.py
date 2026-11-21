@@ -8,6 +8,9 @@ Defaults match the tools under ~/Tools (override with flags or env):
   --wine      ~/Tools/wine/11.0_1/wine/bin/wine          (env DBZ_WINE)
   --prefix    ~/Tools/wine/prefix-dbz-installer          (env DBZ_WINEPREFIX; a throwaway prefix, it gets reset)
   --makensis  ~/Tools/nsis/3.13/bin/makensis             (env DBZ_MAKENSIS; NSISDIR = <makensis>/../../share/nsis)
+  --old-setups ~/Tools/dbz-old-setups                    (env DBZ_OLD_SETUPS; the released RC1 / RC2 installers that the
+               upgrade scenarios v01-v03 install first, SHA-256 checked; missing ones fail those scenarios, they are not skipped:
+               gh release download rc1 -R lming888/DBZ-SSD-zhTW -p '*setup.exe' -D <folder>, and rc2)
 
 --ref builds installer/ from another commit (git archive). A commit without /DELETEDATA support
 gets two edits so its "delete player data" section can run silently at all: the section is selected by default and the
@@ -47,8 +50,22 @@ PRODUCT = "七龍珠Z 超賽亞傳說 繁中版"
 HDPACK_LNK = "下載 HD 美術包"
 MARKER = ".dbz-ssd-zhtw-install"
 SYNC_MARKER = ".launcher-sync.toml"
-UNINST_KEY = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall" "\\" + APP_ID
+UNINST_ROOT = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall"
+UNINST_KEY = UNINST_ROOT + "\\" + APP_ID
 OWN_KEY = "HKCU\\Software\\" + APP_ID
+# What the installer itself puts in the install folder (dbz-zhtw.nsi: the marker first, then the launcher and the
+# uninstaller). Anything else at the top of an install folder is the player's (save\, hd-pack.zip) or left over.
+PROGRAM_FILES = {EXE_NAME, UNINST, MARKER}
+# The upgrade scenarios (v01-v04): the installer under test is built a second time from a copy whose
+# launcher/RELEASE_NAME is NEXT_NAME and RELEASE is NEXT_RELEASE, so "the new version" is told apart from the old
+# installers, which are the released ones (RC1, RC2), checked against the SHA-256 of their Release's
+# SHA256SUMS_public.txt. They are not in the repo: --old-setups names the folder that holds them.
+NEXT_NAME = "RC3"
+NEXT_RELEASE = "47"
+OLD_SETUPS = {
+    "RC1": ("DBZ-SSD-zh-TW-RC1-setup.exe", "8b83a3d9c5181d911280f3c9a9c64d93d51e5deee9376c0fd52a3b31a9119bca", "45"),
+    "RC2": ("DBZ-SSD-zh-TW-RC2-setup.exe", "7f05ad0ff00b528a137f45ed2401055e212860b8d8dc65f490e2f12a1d66a871", "46"),
+}
 
 HOME = Path.home()
 
@@ -181,6 +198,20 @@ class Wine:
     def reg_key_exists(self) -> bool:
         return self.reg("query", UNINST_KEY).returncode == 0
 
+    def subkeys(self, key: str) -> list[str]:
+        """The names of `key`'s direct subkeys (ASCII names; Wine's reg prints others as ?)."""
+        r = self.reg("query", key)
+        if r.returncode != 0:
+            return []
+        prefix = key.split("\\", 1)[1].lower()
+        names = []
+        for line in r.stdout.decode("utf-8", "replace").splitlines():
+            line = line.strip()
+            head, _, rest = line.partition("\\")
+            if head.upper() in ("HKEY_CURRENT_USER", "HKCU") and rest.lower().startswith(prefix + "\\"):
+                names.append(rest[len(prefix) + 1:])
+        return names
+
     def reg_set(self, value: str, data: str):
         self.reg("add", UNINST_KEY, "/v", value, "/t", "REG_SZ", "/d", data, "/f")
 
@@ -253,6 +284,7 @@ class Build:
         self.work = work
         self.uncopies = 0  # uninstaller copies made so far (each run gets its own folder)
         self.drives = 0  # guidrive args files written so far
+        self.old_setups = None  # --old-setups: the folder of the released RC1 / RC2 installers (upgrade scenarios)
 
     def compile(self, nsi: Path, defines: dict, strict=True) -> None:
         cmd = [str(self.makensis), "-V2"] + (["-WX"] if strict else [])
@@ -357,6 +389,34 @@ class Build:
             d["AUTO_UPDATE"] = None
         self.compile(nsi, d)
         return out
+
+    def next_setup(self, nsi: Path) -> Path:
+        """The installer under test (`nsi`) as the next release: built from a copy of its installer/ folder whose
+        launcher/RELEASE_NAME is NEXT_NAME, with RELEASE=NEXT_RELEASE and the stand-in launcher (the real launcher needs
+        the Windows game build, which this Mac cannot make). Only the name, the number and the launcher differ from the
+        installer the other scenarios run."""
+        out = self.work / "DBZ-SSD-zh-TW-next-test.exe"
+        if not out.exists():
+            root = self.work / "next"
+            shutil.copytree(nsi.parent, root / "installer", ignore=shutil.ignore_patterns("tests"))
+            shutil.copytree(nsi.parent.parent / "launcher" / "icon", root / "launcher" / "icon")
+            (root / "launcher" / "RELEASE_NAME").write_text(NEXT_NAME + "\n", encoding="utf-8")
+            self.compile(root / "installer" / nsi.name,
+                         {"LAUNCHER_EXE": self.standin(), "RELEASE": NEXT_RELEASE, "OUTFILE": out})
+        return out
+
+    def old_setup(self, name: str) -> Path:
+        """The released installer `name` (RC1, RC2) from --old-setups, its SHA-256 checked against the Release's."""
+        file, sha, _ = OLD_SETUPS[name]
+        where = self.old_setups / file if self.old_setups else None
+        if where is None or not where.is_file():
+            raise RuntimeError(f"找不到 {file}（--old-setups／DBZ_OLD_SETUPS：{self.old_setups}）。取得方式："
+                               f"gh release download {name.lower()} -R lming888/DBZ-SSD-zhTW -p '*setup.exe' -D <資料夾>")
+        import hashlib
+        got = hashlib.sha256(where.read_bytes()).hexdigest()
+        if got != sha:
+            raise RuntimeError(f"{where} 的 SHA-256 是 {got}，不是 Release {name} 的 {sha}")
+        return where
 
     def winlist(self) -> Path:
         out = self.work / "winlist"
@@ -466,6 +526,16 @@ class Ctx:
             if p.exists():
                 p.unlink()
         w.reg_delete()
+        # a mutant with another APP_ID (the upgrade scenarios' mutation check) leaves its own key and default folder
+        for root in (UNINST_ROOT, "HKCU\\Software"):
+            for name in w.subkeys(root):
+                if name.startswith(APP_ID) and name != APP_ID:
+                    w.reg("delete", root + "\\" + name, "/f")
+        programs = w.u(w.localappdata + "\\Programs")
+        if programs.is_dir():
+            for p in programs.iterdir():
+                if p.name.startswith(APP_ID):
+                    force_rmtree(p, w.c)
         w.u(self.T + "\\logs").mkdir(parents=True)
         w.u(self.T + "\\src").mkdir(parents=True)
 
@@ -475,11 +545,12 @@ class Ctx:
         p.write_bytes(data)
         return p
 
-    def install(self, d=None, *extra, log="C:\\dbztest\\logs\\setup.log") -> int:
+    def install(self, d=None, *extra, log="C:\\dbztest\\logs\\setup.log", exe=None) -> int:
+        """Silent install with this run's setup exe (or `exe`); without `d`, where the installer itself picks."""
         args = ["/S", f"/LOG={log}", *extra]
         if d is not None:
             args.append(f"/D={d}")
-        return self.w.run(self.setup_exe, args)
+        return self.w.run(exe or self.setup_exe, args)
 
     def snapshot(self, win) -> dict:
         """{relative path: bytes (None for a folder)} of everything under `win`, to prove nothing changed."""
@@ -1052,6 +1123,151 @@ def s25_marker_unreadable(c: Ctx):
     c.unchanged(d, before, "解除安裝也沒有動任何東西")
     c.eq(c.install(d, log="C:\\dbztest\\logs\\setup2.log"), 0, "放開後重裝 結束碼")
     c.exists(d + "\\save\\saves\\ssd.sav", "存檔還在")
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Upgrade scenarios: a released RC1 / RC2 installer first, then the installer under test as the next release
+# (Build.next_setup). What they prove: the installer's own logic (where it installs, what it writes and leaves, the
+# registry, the shortcuts). What they do not: the real launcher of the next release (a stand-in is installed), what that
+# launcher does on its first run (the unpacked game of the old bundle in %LOCALAPPDATA%\dbz-ssd-zhtw\app is removed by
+# the launcher, launcher/src/main.rs clean_up, not by the installer), Windows itself (Explorer's shortcuts, Settings >
+# Apps, an exe locked because it runs).
+# ----------------------------------------------------------------------------------------------------------------------
+
+UPGRADE_LOG = "C:\\dbztest\\logs\\upgrade.log"
+
+
+def plant_player_files(c: Ctx, d):
+    """What an earlier release's player has in the install folder after playing (installer/README.md's list of the
+    launcher's and the game's files), and the launcher's own folder."""
+    for rel, data in (("save\\saves\\ssd.sav", b"BATTERY"),
+                      ("save\\saves\\ssd.settings", b"ssd-settings\r\naccess.language=zh-tw\r\n"),
+                      ("save\\saves\\ssd.options", b"OPTIONS"),
+                      ("save\\states\\slot1.ssdstate", b"STATE"),
+                      ("save\\cache\\rom\\canonical.sfc", b"ROM"),
+                      ("save\\art-override\\a.png", b"PNG"),
+                      ("save\\voice\\ssj-transform.wav", b"WAV"),
+                      ("save\\" + SYNC_MARKER, b"sync"),
+                      ("save\\.launcher-lang", b"zh-tw"),
+                      ("save\\.launcher-art", b"art"),
+                      ("save\\zh-tw.tsv", b"TSV"),
+                      ("save\\fonts\\OFL.txt", b"OFL"),
+                      ("hd-pack.zip", b"PK-HD")):
+        c.write(d + "\\" + rel, data)
+    la = c.w.localappdata
+    c.write(la + "\\dbz-ssd-zhtw\\app\\old-bundle\\ssd-recompiled.exe", b"OLD GAME")
+    c.write(la + "\\dbz-ssd-zhtw\\last-run.log", b"log")
+
+
+def old_install(c: Ctx, name, d=None):
+    """Install the released `name` silently (where it picks without `d`); return the folder it went to."""
+    log = f"C:\\dbztest\\logs\\setup-{name}.log"
+    c.eq(c.install(d, log=log, exe=c.build.old_setup(name)), 0, f"{name} 安裝程式 結束碼")
+    d = d or c.w.default_dir
+    c.eq(marker_state(c, d), "installed", f"{name} 裝好：標記檔 state=installed")
+    c.check(f"version=v{OLD_SETUPS[name][2]}" in c.marker(d), f"{name} 裝好：標記檔 version=v{OLD_SETUPS[name][2]}",
+            c.marker(d))
+    c.eq(c.w.reg_get("DisplayVersion"), name, f"{name} 裝好：登錄 DisplayVersion")
+    # the old installer put exactly what the new one puts: nothing it wrote can be left behind as a file of no use
+    c.eq(sorted(os.listdir(c.w.u(d))), sorted(PROGRAM_FILES), f"{name} 安裝程式放的檔與新版相同（只有這三個）")
+    return d
+
+
+def upgraded(c: Ctx, d, old_name, uninst_before, what=""):
+    """After the next release went over `old_name` in `d`: one install, the new one's files, nothing extra."""
+    # left over = at the top of the folder, neither the installer's own files nor the player's (save\, hd-pack.zip)
+    extra = sorted(set(os.listdir(c.w.u(d))) - PROGRAM_FILES - {"save", "hd-pack.zip"})
+    c.eq(extra, [], f"{what}安裝資料夾沒有多餘的檔（不是程式三個檔、save\\、hd-pack.zip 的東西）")
+    exe = c.w.u(d + "\\" + EXE_NAME)
+    got = exe.read_bytes() if exe.exists() else b""
+    c.check(got == c.build.standin().read_bytes(), f"{what}啟動器 exe 換成新版的",
+            f"現在的 exe {len(got)} 位元組，新版的替身 {c.build.standin().stat().st_size} 位元組")
+    c.check(c.w.u(d + "\\" + UNINST).read_bytes() != uninst_before, f"{what}解除安裝程式換成新版的")
+    text = c.marker(d)
+    c.check(f"version=v{NEXT_RELEASE}" in text and "app=" + APP_ID in text, f"{what}標記檔 version=v{NEXT_RELEASE}", text)
+    c.eq(marker_state(c, d), "installed", f"{what}標記檔 state=installed")
+    c.eq(c.w.subkeys(UNINST_ROOT), [APP_ID], f"{what}「新增或移除程式」只有一個項目")
+    c.eq(c.w.reg_get("DisplayVersion"), NEXT_NAME, f"{what}登錄 DisplayVersion 是新版")
+    c.eq(c.w.reg_get("InstallLocation"), d, f"{what}登錄 InstallLocation")
+    c.eq(c.w.reg_get("UninstallString"), f'"{d}\\{UNINST}"', f"{what}登錄 UninstallString")
+    c.eq(c.w.own_get("InstallDir"), d, f"{what}記下的安裝位置")
+    c.eq([k for k in c.w.subkeys("HKCU\\Software") if k.startswith(APP_ID)], [APP_ID], f"{what}本程式自己的機碼只有一個")
+    sm = sorted(p.name for p in c.w.startmenu_dir.iterdir()) if c.w.startmenu_dir.is_dir() else []
+    c.eq(sm, sorted([f"{PRODUCT}.lnk", f"{HDPACK_LNK}.lnk"]), f"{what}開始功能表資料夾只有兩個捷徑")
+    desk = sorted(p.name for p in (c.w.user / "Desktop").iterdir() if p.suffix.lower() == ".lnk")
+    c.eq(desk, [f"{PRODUCT}.lnk"], f"{what}桌面只有一個捷徑")
+    c.check(not (c.w.startmenu_dir.parent / f"{PRODUCT}.lnk").exists(), f"{what}開始功能表最上層沒有舊捷徑")
+    c.log_has(UPGRADE_LOG, f"偵測到已安裝的 {old_name}，原地升級為 {NEXT_NAME}：{d}", f"{what}紀錄寫明從 {old_name} 原地升級")
+    entry_ok(c, what)
+
+
+def upgrade_over(c: Ctx, name):
+    """`name` installed where it picks (the default folder), played, then the next release installed where it picks."""
+    d = old_install(c, name)
+    plant_player_files(c, d)
+    save_before = c.snapshot(d + "\\save")
+    app_before = c.snapshot(c.w.localappdata + "\\dbz-ssd-zhtw")
+    uninst_before = c.w.u(d + "\\" + UNINST).read_bytes()
+    c.eq(c.install(log=UPGRADE_LOG, exe=c.build.next_setup(c.nsi)), 0, "新版安裝程式（不帶 /D=）結束碼")
+    c.exists(d + "\\" + APP_ID, "沒有建子資料夾", want=False)
+    upgraded(c, d, name, uninst_before)
+    c.unchanged(d + "\\save", save_before, "save\\ 一個位元組都沒變（存檔、設定、語言、ROM 快取、美術覆蓋圖、語音、譯文表）")
+    c.eq(c.w.u(d + "\\hd-pack.zip").read_bytes(), b"PK-HD", "hd-pack.zip 保留")
+    c.unchanged(c.w.localappdata + "\\dbz-ssd-zhtw", app_before, "%LOCALAPPDATA%\\dbz-ssd-zhtw 安裝程式沒有動")
+    # the upgraded install is an ordinary one: uninstalling it (keeping data) works and keeps the save
+    c.eq(c.uninstall(d), 0, "升級後解除安裝（保留資料）結束碼")
+    saves_in_place(c, d, "升級後解除安裝：")
+    c.check(not c.w.reg_key_exists(), "升級後解除安裝：「新增或移除程式」的項目已刪")
+
+
+@scenario("已裝 RC1（真的 RC1 安裝程式、預設位置、玩過）→ 新版不帶 /D=：原地升級，一個項目、捷徑不重複、沒有多餘的檔、save\\ 與 hd-pack.zip 不變")
+def v01_upgrade_rc1(c: Ctx):
+    upgrade_over(c, "RC1")
+
+
+@scenario("已裝 RC2（真的 RC2 安裝程式、預設位置、玩過）→ 新版不帶 /D=：原地升級，一個項目、捷徑不重複、沒有多餘的檔、save\\ 與 hd-pack.zip 不變")
+def v02_upgrade_rc2(c: Ctx):
+    upgrade_over(c, "RC2")
+
+
+@scenario("RC1 裝在 A、RC2 裝在 B（各自玩過）→ 新版不帶 /D=：升級 B（登錄與記下的位置指的那份）；A 原封不動，RC2 時就已不在「新增或移除程式」裡")
+def v03_upgrade_two_folders(c: Ctx):
+    a, b = c.T + "\\rc1", c.T + "\\rc2"
+    old_install(c, "RC1", a)
+    plant_player_files(c, a)
+    old_install(c, "RC2", b)
+    plant_player_files(c, b)
+    # before the new release: RC2's install already took the one entry and the remembered folder from A
+    c.eq(c.w.subkeys(UNINST_ROOT), [APP_ID], "RC2 裝好後：「新增或移除程式」只有一個項目")
+    c.eq(c.w.reg_get("InstallLocation"), b, "RC2 裝好後：項目指向 B（A 已經不在項目裡）")
+    c.eq(c.w.own_get("InstallDir"), b, "RC2 裝好後：記下的位置是 B")
+    a_before = c.snapshot(a)
+    b_save = c.snapshot(b + "\\save")
+    uninst_before = c.w.u(b + "\\" + UNINST).read_bytes()
+    c.eq(c.install(log=UPGRADE_LOG, exe=c.build.next_setup(c.nsi)), 0, "新版安裝程式（不帶 /D=）結束碼")
+    upgraded(c, b, "RC2", uninst_before, "B：")
+    c.unchanged(b + "\\save", b_save, "B：save\\ 一個位元組都沒變")
+    c.unchanged(a, a_before, "A：整個資料夾一個位元組都沒變（RC1 的程式、標記檔 state=installed、存檔都還在）")
+    c.check(a not in c.read_log(UPGRADE_LOG), "新版的紀錄沒有提到 A")
+    c.exists(c.w.default_dir, "預設位置沒有被裝進去", want=False)
+
+
+@scenario("全新安裝（沒有舊版）：程式三個檔、一個項目、紀錄沒有「偵測到已安裝」；同一版再裝一次：紀錄寫「在原位置重新安裝」")
+def v04_fresh_then_same(c: Ctx):
+    nxt = c.build.next_setup(c.nsi)
+    d = c.w.default_dir
+    c.eq(c.install(log=UPGRADE_LOG, exe=nxt), 0, "全新安裝 結束碼")
+    c.eq(sorted(os.listdir(c.w.u(d))), sorted(PROGRAM_FILES), "安裝資料夾只有程式三個檔")
+    c.eq(c.w.subkeys(UNINST_ROOT), [APP_ID], "「新增或移除程式」只有一個項目")
+    c.eq(c.w.reg_get("DisplayVersion"), NEXT_NAME, "登錄 DisplayVersion")
+    c.log_has(UPGRADE_LOG, "偵測到已安裝", "全新安裝：紀錄沒有「偵測到已安裝」", want=False)
+    c.write(d + "\\save\\saves\\ssd.sav", b"BATTERY")
+    log2 = "C:\\dbztest\\logs\\upgrade2.log"
+    c.eq(c.install(log=log2, exe=nxt), 0, "同一版再裝一次 結束碼")
+    c.log_has(log2, f"偵測到已安裝的 {NEXT_NAME}，在原位置重新安裝：{d}", "同一版再裝：紀錄寫「在原位置重新安裝」")
+    c.log_has(log2, "原地升級為", "同一版再裝：紀錄沒有說是升級", want=False)
+    saves_in_place(c, d, "同一版再裝：")
+    c.eq(c.w.subkeys(UNINST_ROOT), [APP_ID], "同一版再裝：「新增或移除程式」仍只有一個項目")
 
 
 @scenario("FileId 讀值：檔案編號＝macOS inode、同磁碟序號相同、不存在回空字串；SamePath 各情況")
@@ -1876,11 +2092,24 @@ def g03_reinstall_elsewhere(c: Ctx):
     c.eq(c.install(old), 0, "先靜默裝到舊位置")
     c.write(old + "\\save\\saves\\slot1.srm", b"SAVE")
     g = gui_install(c)
+    text = g.text_on_page()
+    c.check(f"偵測到已安裝的 {RELEASE_NAME}，這會在原位置重新安裝，存檔與 HD 美術包都會保留。" in text,
+            "歡迎頁第一段：同一版，在原位置重新安裝", text[:300])
+    g.shot("01c-welcome-reinstall")
+    g.texts_fit("歡迎頁（重新安裝）")
     g.click(IDOK)
     field = [r[3].rstrip("\\") for r in g.controls() if r[0] == 1019]  # the page shows it with a trailing "\"
     c.eq(field[:1], [old], "選位置頁預設帶出上次的位置（InstallDirRegKey）")
-    dir_attempt(c, g, c.T + "\\new", "存檔與 ROM 設定（那裡的 save 資料夾）會留在舊位置", "09-directory-moved",
-                answer=IDNO)
+    g.settext(1019, c.T + "\\new")
+    g.click(IDOK)
+    text = g.box_text()
+    c.check("存檔與 ROM 設定（那裡的 save 資料夾）會留在舊位置" in text, "提醒存檔不會搬過來", text[:400])
+    c.check("舊位置的程式也不會被移除" in text and "「新增或移除程式」會改成指向新位置" in text
+            and "uninstall-dbz-zhtw.exe" in text and "存檔預設保留" in text,
+            "提醒也說明舊位置的程式不會被移除、怎麼移除它", text[:400])
+    g.shot("09-directory-moved", "box")
+    g.click(IDNO, "box")
+    c.check(g.ctl_id("Edit") == 1019, "按「否」後仍在選位置頁")
     g.click(IDCANCEL)
     g.click(IDYES, "box")
     g.finish()
@@ -2324,6 +2553,29 @@ def g15_hd_pack_already_there(c: Ctx):
     c.eq(launcher_calls(c, 0), [], "啟動器沒有被叫（沒有 --hd-pack）")
     c.eq(c.w.u(d + "\\hd-pack.zip").read_bytes(), b"PK-not-really", "原本的 hd-pack.zip 沒有被動到")
 
+@scenario("已裝 RC2（真的 RC2 安裝程式）→ 執行新版安裝程式：歡迎頁寫「偵測到已安裝的 RC2，這會原地升級為 RC3」，選位置頁帶出那個位置", gui=True)
+def g16_welcome_upgrade(c: Ctx):
+    d = old_install(c, "RC2")
+    g = Gui(c, f"{PRODUCT} {NEXT_NAME} 安裝程式",
+            c.w.popen(c.build.next_setup(c.nsi), ["/LOG=C:\\dbztest\\logs\\gui.log"]))
+    c.check(g.wait(), "安裝精靈出現")
+    text = g.text_on_page()
+    c.check(f"偵測到已安裝的 RC2，這會原地升級為 {NEXT_NAME}，存檔與 HD 美術包都會保留。" in text,
+            "歡迎頁第一段：偵測到 RC2、原地升級", text[:300])
+    c.check(f"這會安裝 {NEXT_NAME}" not in text, "歡迎頁沒有全新安裝的說法")
+    g.shot("19-welcome-upgrade")
+    g.texts_fit("歡迎頁（升級）")
+    g.panel_stack("歡迎頁（升級）")
+    g.click(IDOK)
+    field = [r[3].rstrip("\\") for r in g.controls() if r[0] == 1019]
+    c.eq(field[:1], [d], "選位置頁帶出 RC2 的位置")
+    g.shot("20-directory-upgrade")
+    g.click(IDCANCEL)
+    g.click(IDYES, "box")
+    g.finish()
+    c.eq(c.w.reg_get("DisplayVersion"), "RC2", "取消之後仍是 RC2（沒有裝任何東西）")
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 
 def main(argv=None) -> int:
@@ -2334,6 +2586,9 @@ def main(argv=None) -> int:
         "DBZ_WINEPREFIX", HOME / "Tools/wine/prefix-dbz-installer")))
     ap.add_argument("--makensis", type=Path, default=Path(os.environ.get(
         "DBZ_MAKENSIS", HOME / "Tools/nsis/3.13/bin/makensis")))
+    ap.add_argument("--old-setups", type=Path, default=Path(os.environ.get(
+        "DBZ_OLD_SETUPS", HOME / "Tools/dbz-old-setups")),
+                    help="folder of the released DBZ-SSD-zh-TW-RC1-setup.exe and -RC2-setup.exe (upgrade scenarios v01-v03)")
     ap.add_argument("--ref", help="build installer/ from this git commit instead of the working tree")
     ap.add_argument("--nsi", type=Path, help="build from this copy of dbz-zhtw.nsi (mutation checks)")
     ap.add_argument("--auto-update", action="store_true", help="compile with -DAUTO_UPDATE")
@@ -2359,6 +2614,7 @@ def main(argv=None) -> int:
     wine.guard_host_isolation()
     work = Path(tempfile.mkdtemp(prefix="dbz-installer-tests-"))
     build = Build(args.makensis, work)
+    build.old_setups = args.old_setups
     nsi, notes = (args.nsi.resolve(), []) if args.nsi else build.source_tree(args.ref)
     setup_exe = build.setup(nsi, args.auto_update)
     print(f"安裝檔：{nsi}（{'-DAUTO_UPDATE' if args.auto_update else '無 AUTO_UPDATE'}）")

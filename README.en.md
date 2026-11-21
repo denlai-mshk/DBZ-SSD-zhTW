@@ -4,9 +4,9 @@
 
 Author: Ming Liu (GitHub: [lming888](https://github.com/lming888))
 
-**Download**: [the RC2 installer and the Android APK](https://github.com/lming888/DBZ-SSD-zhTW/releases/tag/rc2)
+**Download**: [the RC3 installer and the Android APK](https://github.com/lming888/DBZ-SSD-zhTW/releases/tag/rc3)
 
-**Status**: RC2, a release candidate. Nobody has played it through from start to end on Windows yet; reports from playing it are welcome.
+**Status**: RC3, a release candidate. Nobody has played it through from start to end on Windows yet; reports from playing it are welcome.
 
 ![The Chinese text in a story dialogue](docs/media/zh-tw-dialogue.png)
 ![The Chinese text in a battle message](docs/media/zh-tw-battle.png)
@@ -34,7 +34,7 @@ Any of the three ROMs works (the Japanese one together with `dbz102.ips`). On Wi
 
 ### Method 1: the release (recommended)
 
-The RC2 Release provides the installer `DBZ-SSD-zh-TW-RC2-setup.exe` (attached to the Release page):
+The RC3 Release provides the installer `DBZ-SSD-zh-TW-RC3-setup.exe` (attached to the Release page):
 
 - **Installer**:
   - Installs for the current user only, without administrator rights.
@@ -42,6 +42,7 @@ The RC2 Release provides the installer `DBZ-SSD-zh-TW-RC2-setup.exe` (attached t
   - Lets you pick your own ROM and IPS on the way; skip it and the launcher asks the first time.
   - After the ROM, a page "HD 高畫質美術包" (the HD art pack): on the left the original and the HD picture of the same game frame, one above the other; on the right a note that the art pack is the upstream author's work, about 462 MB. Tick "download the HD art pack after setup" (off by default) to download it when setup finishes; when the install folder already has the pack, the page only tells you so and does not ask. The finish page has "start the game"; when both are ticked, the pack is downloaded first and the game starts after the download.
   - Makes a desktop shortcut "七龍珠Z 超賽亞傳說 繁中版" and a Start menu folder "七龍珠Z 超賽亞傳說 繁中版" with the game and "下載 HD 美術包" (download the HD art pack).
+  - **RC1 or RC2 already installed**: just run the newer installer; it upgrades in place, with no need to uninstall first. Keep the install folder it offers (the last one, the default): the program is replaced, the saves, the ROM setup, the HD art pack, the game settings and the language are kept, and "Add or remove programs" and the shortcuts still list one copy. The installer's first page says it found the installed RC2 and will upgrade it in place to RC3. The launchers of RC1 and RC2 do not look for a newer version themselves: download and run the new installer once. With RC1 and RC2 installed in two different folders, the new version upgrades the one installed last (the one "Add or remove programs" points at). Installing into another folder leaves the old folder's program and saves where they are (the saves are not moved over) and points "Add or remove programs" at the new folder; remove the old copy, when you no longer want it, by running `uninstall-dbz-zhtw.exe` in the old folder (the saves are kept by default).
   - Can be removed in "Add or remove programs". By default the saves and the HD art pack are kept; to delete them too, tick "同時刪除存檔、ROM 設定、HD 美術包與遊戲設定" (also delete the saves, the ROM setup, the HD art pack and the game settings).
   - Has no code-signing certificate: the first time it runs, Windows SmartScreen says "Windows protected your PC"; click "More info", then "Run anyway".
 
@@ -96,11 +97,13 @@ The difference between the two methods: method 2 does not have the fixes I wrote
 ### Android version
 
 1. You need an arm64 (64-bit ARM) phone or tablet with Android 8.0 or later, and the same ROM as in "What you need" above.
-2. Download `DBZ-SSD-zh-TW-RC2-arm64.apk` from the Release and open it on the phone to install it. The APK is not in a store, so at the first install the system asks you to let that source "install unknown apps".
+2. Download `DBZ-SSD-zh-TW-RC3-arm64.apk` from the Release and open it on the phone to install it. If this project's RC1, RC2 or a test build is installed, just install over it: the saves and settings are kept. The APK is not in a store, so at the first install the system asks you to let that source "install unknown apps".
 3. At the first start the language page comes first (Taiwan, Hong Kong); then pick the ROM with the system's file picker. With the Japanese ROM it then asks for `dbz102.ips`.
 4. (Optional) the HD art pack: download `hd-pack.zip` to the phone first, then pick it with the file picker from 「安裝 HD 美術包」 (Install the HD pack) in the options (about 0.9 GB once installed).
 
 Note: the app has the same package name as upstream's Android version but another signature, so if you installed upstream's Android version, uninstall it first; uninstalling the Android version deletes its saves too.
+
+When it does not start: if the game ends before it draws its first picture, the next start first shows a dialog with the reason (also copied to the clipboard, for a report; folder and file names are taken out of it) and tries again with OpenGL ES.
 
 ### Method 3: build it yourself from source
 
@@ -116,13 +119,14 @@ On its first run, give the built `target\release\ssd-recompiled.exe` the ROM wit
 
 One installer holds two Traditional Chinese translations, Taiwan's and Hong Kong's; they differ mainly in the names:
 
-- Characters' names follow the usual Hong Kong names, for example 笛子魔童, 比達, 撒亞人, 格古洛, 八戒, 基爾, 彌太郎; technique names change only the names inside them. The names were checked with the help of players from Hong Kong.
+- Characters' names follow the usual Hong Kong names, for example 笛子魔童, 比達, 撒亞人, 格古洛, 八戒, 基爾, 彌太郎; the names inside technique names change with them. The names were checked with the help of players from Hong Kong.
+- Technique names follow the Hong Kong names: 龜波氣功, 元氣彈 (超元氣彈), 魔貫光殺炮, 魔光炮, 氣功炮, 繰氣彈, 時間停頓, 破壞炮, 殛光球, 轉換身體.
 - The opening's line naming the partners is 「孫悟空與笛子魔童」; the school mark of the cards is 「天神」; two lines of the opening captions lost a few characters to fit the width; the opening credit is 「繁體中文化」.
 
 Choosing:
 - The first start shows a language page listing Taiwan, then Hong Kong; pick one.
 - To change it later, in Options press R (W on the keyboard) to reach the Accessibility tab, and switch the Language row left or right; it takes effect at once. The row's order is Taiwan, Hong Kong, English.
-- Players upgrading from RC1: a folder that already has saves stays on Taiwan's names and shows no language page, and the saves are untouched; switch on that row for the Hong Kong names.
+- Players upgrading from RC1: a folder that already has saves stays on Taiwan's names and shows no language page, and the saves are untouched; switch on that row for the Hong Kong names. Players upgrading from RC2 keep the language they chose.
 
 ## Features
 
@@ -150,10 +154,17 @@ The game screens
 - In the Hong Kong version, the big character on the cards and the square seal on the left of the status screen are still the single character 「神」: they are pictures, and this version changes only the school mark beside them to 「天神」.
 - If the settings file `save\saves\ssd.settings` is changed to an encoding other than UTF-8, the language page may appear at every start.
 - The changes brought in by upstream v0.3.14 and v0.3.15 (a button leaves GAME OVER for the title, the "Pixel" look, the level cap, the "HD art" switch) have not been fully seen on the Chinese screens.
+- After losing a battle and leaving the GAME OVER screen, "Continue" brings the cheats and the game options back to the settings of that save (as "Continue" after starting the game does).
+- The first map screen after loading a save still pauses once, briefly.
+- Up to RC2, "Continue" after GAME OVER lost cards (one of each stack; the single Gohan card disappeared). RC3 fixes it, but a save written after a card was lost does not get it back; add it again with 「卡牌產生器」 (Item spawner) on the 「作弊」 (Cheats) screen of the menu (it marks the save with the CHEATS badge).
+
+Android
+- Some older Android devices close right after starting. RC3 shows a dialog with the reason and switches to OpenGL ES after a start that drew no picture, but this has not been checked on a device that has the problem; if it happens, please paste the dialog's text into the report.
 
 Installing and starting
 - The installer has not been seen on a real machine at 125%-200% scaling or on Windows without the PMingLiU font; when text is cut off, please report it (with a screenshot and the scaling setting).
 - Downloading the art pack from the copy when upstream cannot deliver it has not been run with a real loss of connection.
+- The launchers of RC1 and RC2 do not look for a newer version: download and run the new installer (on Android, install the APK over the old one). With RC1 and RC2 installed in two folders, the new version upgrades the one installed last; the other stays where it is: run `uninstall-dbz-zhtw.exe` there when you no longer want it.
 - Nobody has played it through on a real Windows machine yet. When reporting a problem, attach `last-run.log`, an F12 screenshot and where it happened (story part or map).
 
 ## Translation basis

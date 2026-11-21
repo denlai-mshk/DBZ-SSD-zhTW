@@ -8,6 +8,7 @@
 include!("main.rs");
 
 mod android_lifecycle;
+mod android_report;
 mod android_setup;
 
 use std::ffi::{OsString, c_char, c_int};
@@ -127,7 +128,8 @@ pub extern "C" fn SDL_main(_argc: c_int, _argv: *mut *mut c_char) -> c_int {
         android_logger::Config::default().with_max_level(log::LevelFilter::Info).with_tag("ssd"),
     );
     forward_stderr();
-    std::panic::set_hook(Box::new(|info| log::error!("panic: {info}")));
+    // A panic shows its report before the process ends (`android_report`).
+    android_report::install_panic_hook();
     let mut base = vec![OsString::from("ssd-recompiled")];
     if let Some(dir) = data_dir() {
         log::info!("data folder {}", dir.display());
@@ -160,6 +162,12 @@ pub extern "C" fn SDL_main(_argc: c_int, _argv: *mut *mut c_char) -> c_int {
             base.push(OsString::from("--bench-report"));
             base.push(dir.join("bench-report.txt").into_os_string());
         }
+        // The graphics backend of this start, from what the last one left (after the arguments file: a backend it
+        // forces is kept), and the dialog when the last start died before its first picture.
+        android_report::set_words(lang::interface_text(
+            &options::read_settings().unwrap_or_default(),
+        ));
+        android_report::begin(&dir);
     }
     // One SDL context for the whole life of the activity: the setup screens and the game each open their window
     // from it, and the setup comes back when the game asks for it (Options, or Select + Start in Classic).
@@ -170,7 +178,14 @@ pub extern "C" fn SDL_main(_argc: c_int, _argv: *mut *mut c_char) -> c_int {
     loop {
         let mut args = base.clone();
         if let Some(dir) = data_dir() {
+            // The report's words: the language the setup screens and the game show (it may change between runs).
+            android_report::set_words(lang::interface_text(
+                &options::read_settings().unwrap_or_default(),
+            ));
             if !android_setup::run(&mut args, &dir, forced.take()) {
+                // The player quit, or the setup screens failed: then their report shows.
+                android_report::run_returned(!android_report::has_notes());
+                android_report::after_run(false);
                 return 0;
             }
             let (mode, pack) = android_setup::game_info(&dir);
@@ -178,8 +193,13 @@ pub extern "C" fn SDL_main(_argc: c_int, _argv: *mut *mut c_char) -> c_int {
             ssd_menus::options::show_game_page(true);
         }
         log::info!("arguments {args:?}");
+        android_report::stage(launch_guard::Stage::Start);
         let code = run(args);
         log::info!("the game ended with {code:?}");
+        // The run's stage file goes unless it failed with its graphics open; a run that failed shows why (its error went
+        // to stderr, kept by `android_report`).
+        android_report::run_returned(code == std::process::ExitCode::SUCCESS);
+        android_report::after_run(code != std::process::ExitCode::SUCCESS);
         match android_setup::take_request() {
             Some(request) => forced = Some(request),
             None => return 0,
@@ -206,6 +226,7 @@ fn forward_stderr() {
         let file = unsafe { std::fs::File::from_raw_fd(reader) };
         for line in BufReader::new(file).lines().map_while(Result::ok) {
             log::error!("{line}");
+            android_report::stderr_line(&line);
         }
     });
 }

@@ -177,6 +177,7 @@ pub fn run(args: &mut Vec<OsString>, dir: &Path, forced: Option<Forced>) -> bool
         Ok(false) => false,
         Err(error) => {
             log::error!("the setup screens failed: {error:#}");
+            crate::android_report::note(format!("the setup screens failed: {error:#}"));
             false
         }
     }
@@ -224,6 +225,7 @@ fn screens(flow: &mut Flow, dir: &Path, first: Page, note: Option<String>) -> an
     sdl3::hint::set("SDL_TOUCH_MOUSE_EVENTS", "1");
     let sdl = sdl3::init().map_err(|e| anyhow::anyhow!("{e}"))?;
     let video_subsystem = sdl.video().map_err(|e| anyhow::anyhow!("{e}"))?;
+    crate::android_report::stage(crate::launch_guard::Stage::Setup);
     let mut video = Video::new(&video_subsystem, "七龍珠Z 超賽亞傳說 繁中版")?;
     let mut events = sdl.event_pump().map_err(|e| anyhow::anyhow!("{e}"))?;
     let gamepads = sdl.gamepad().ok();

@@ -169,6 +169,7 @@ mod tests {
             excluded: 0,
             recolour: None,
             bg: false,
+            source: crate::art::ArtSource::None,
         }
     }
 
