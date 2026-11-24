@@ -448,6 +448,12 @@ impl Hd {
         self.driver.busy()
     }
 
+    /// Whether the running HD plan should run at [`crate::app::HD_BURST`] speed (see [`Driver::bursts`]).
+    #[must_use]
+    pub fn bursts(&self) -> bool {
+        self.driver.bursts()
+    }
+
     /// Whether the field is free: no menu has the curtain and no press is under way. Then the picture the window shows
     /// is the game's own and may be drawn a frame late.
     #[must_use]
@@ -697,6 +703,11 @@ impl Hd {
     pub fn art(&mut self, shape: Shape) -> &mut Art {
         self.art.backdrop_shape = shape;
         &mut self.art
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test() -> Self {
+        tests::presentation_hd()
     }
 }
 
@@ -1412,7 +1423,7 @@ mod tests {
     use super::*;
     use ssd_menus::Style;
 
-    fn presentation_hd() -> Hd {
+    pub(super) fn presentation_hd() -> Hd {
         let rom = crate::test_support::sram_counter_rom();
         let labels = ssd_menus::Labels::default();
         Hd {
